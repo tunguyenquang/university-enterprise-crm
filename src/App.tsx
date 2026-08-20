@@ -18,7 +18,7 @@ import {
   TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, labelOf, initialsOf,
 } from "./lib/crmLabels.ts";
 import { 
-  Building2, FileText, Briefcase, Calendar, CheckSquare, Shield, LogOut, Search, Plus, Filter, Download, ArrowRightLeft, UserCheck, Bell, Check, Trash2, Edit2, ShieldAlert, Award, Grid, Menu, X, ToggleLeft, RefreshCcw, Info
+  Building2, FileText, Briefcase, Calendar, CheckSquare, Shield, LogOut, Search, Plus, Filter, Download, ArrowRightLeft, UserCheck, Bell, Check, Trash2, Edit2, ShieldAlert, Award, Grid, Menu, X, ToggleLeft, RefreshCcw, Info, PanelLeftClose, PanelLeftOpen
 } from "lucide-react";
 
 export default function App() {
@@ -46,7 +46,30 @@ export default function App() {
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<"dashboard" | "enterprises" | "kanban" | "mous" | "jobs" | "events" | "tasks" | "users">("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Nhớ trạng thái thu/mở sidebar giữa các lần vào (trước đây reload là bung lại,
+  // người dùng phải thu nhỏ lại mỗi lần).
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    const saved = localStorage.getItem("crm_sidebar_open");
+    return saved === null ? true : saved === "1";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("crm_sidebar_open", sidebarOpen ? "1" : "0");
+  }, [sidebarOpen]);
+
+  // Phim tat Ctrl+B / Cmd+B: thu-mo sidebar khong can roi tay khoi ban phim.
+  // Bo qua khi dang go trong input/textarea de khong chan to hop cua chinh o nhap.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "b") return;
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      e.preventDefault();
+      setSidebarOpen((prev) => !prev);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Core Data Lists
   const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
@@ -563,7 +586,10 @@ export default function App() {
       >
         <div>
           {/* Sidebar head title */}
-          <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+          {/* Khi thu nhỏ: xếp dọc (logo trên, nút toggle dưới) để không chen nhau trong 80px */}
+          <div className={`p-5 border-b border-slate-800 flex items-center ${
+            sidebarOpen ? "justify-between" : "flex-col gap-3"
+          }`}>
             <div className="flex items-center space-x-2.5 overflow-hidden">
               <div className="p-2 bg-blue-600/30 border border-blue-500/30 text-blue-400 rounded-xl shrink-0">
                 <Building2 className="h-5 w-5" />
@@ -575,13 +601,20 @@ export default function App() {
                 </div>
               )}
             </div>
-            
-            {/* Collapse toggle */}
-            <button 
+
+            {/* Nút thu/mở sidebar: icon đổi chiều theo trạng thái để nhìn là biết
+                sẽ xảy ra gì, kèm title/aria-label cho chuột và screen reader. */}
+            <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="text-slate-500 hover:text-white transition focus:outline-none"
+              className="p-1.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-lg transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-[-2px]"
+              title={sidebarOpen ? "Thu nhỏ menu (Ctrl+B)" : "Mở rộng menu (Ctrl+B)"}
+              aria-label={sidebarOpen ? "Thu nhỏ menu điều hướng" : "Mở rộng menu điều hướng"}
+              aria-expanded={sidebarOpen}
+              aria-controls="main-sidebar"
             >
-              <ArrowRightLeft className="h-4 w-4 shrink-0 transform rotate-180" />
+              {sidebarOpen
+                ? <PanelLeftClose className="h-4.5 w-4.5 shrink-0" />
+                : <PanelLeftOpen className="h-4.5 w-4.5 shrink-0" />}
             </button>
           </div>
 
@@ -619,21 +652,35 @@ export default function App() {
               { code: "users", label: "Cán bộ & Phân quyền", icon: Shield, badge: null }
             ].map((item) => (
               <li key={item.code}>
+                {/* Khi thu nhỏ chỉ còn icon trần: `title` cho tooltip khi trỏ chuột,
+                    `aria-label` để screen reader và e2e test vẫn đọc được tên màn hình. */}
                 <button
                   onClick={() => {
                     setActiveTab(item.code as any);
                     setSelectedEnterpriseId(null);
                   }}
-                  className={`w-full flex items-center p-3 text-xs font-bold rounded-xl transition ${
+                  className={`w-full flex items-center p-3 text-xs font-bold rounded-xl transition relative ${
+                    sidebarOpen ? "" : "justify-center"
+                  } ${
                     activeTab === item.code && !selectedEnterpriseId
-                      ? "bg-blue-600 text-white shadow-md shadow-blue-600/10" 
+                      ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
                       : "hover:bg-slate-800 text-slate-400 hover:text-white"
                   }`}
                   id={`nav-${item.code}`}
+                  title={sidebarOpen ? undefined : item.label}
+                  aria-label={item.label}
                 >
                   <item.icon className="h-4.5 w-4.5 shrink-0" />
                   {sidebarOpen && (
                     <span className="ml-3 truncate flex-1 text-left">{item.label}</span>
+                  )}
+                  {/* Thu nhỏ vẫn phải thấy "có việc cần xem": badge co lại thành dấu
+                      chấm nhỏ ở góc thay vì mất hoàn toàn. */}
+                  {!sidebarOpen && item.badge !== null && item.badge !== 0 && (
+                    <span
+                      className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-blue-400 ring-2 ring-slate-900"
+                      aria-hidden="true"
+                    />
                   )}
                   {sidebarOpen && item.badge !== null && item.badge !== 0 && (
                     <span className="ml-2 px-1.5 py-0.5 bg-slate-800 text-[10px] text-slate-300 font-mono font-bold rounded-md border border-slate-700/60 shrink-0">
@@ -648,9 +695,13 @@ export default function App() {
 
         {/* Sidebar lower logout */}
         <div className="p-3.5 border-t border-slate-800">
-          <button 
-            onClick={handleLogout}
-            className="w-full flex items-center p-3 text-xs font-bold text-rose-400 hover:bg-rose-950/20 hover:text-rose-300 transition rounded-xl focus:outline-none"
+          <button
+            onClick={() => handleLogout()}
+            className={`w-full flex items-center p-3 text-xs font-bold text-rose-400 hover:bg-rose-950/20 hover:text-rose-300 transition rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500 focus-visible:outline-offset-[-2px] ${
+              sidebarOpen ? "" : "justify-center"
+            }`}
+            title={sidebarOpen ? undefined : "Đăng xuất hệ thống"}
+            aria-label="Đăng xuất hệ thống"
           >
             <LogOut className="h-4.5 w-4.5 shrink-0" />
             {sidebarOpen && <span className="ml-3 font-semibold text-left">Đăng xuất hệ thống</span>}

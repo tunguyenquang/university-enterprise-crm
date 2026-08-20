@@ -8,6 +8,8 @@ Thư mục này chứa **script và cấu hình để đưa hệ thống lên m�
 | [`deploy-to-174.ps1`](deploy-to-174.ps1) | Build + đẩy code lên VPS `.174`, cấu hình Windows Service (NSSM) và IIS site `hustcrm.jvs.com.vn` |
 | [`backup-db.ps1`](backup-db.ps1) | Sao lưu PostgreSQL bằng `pg_dump` (DB local hoặc DB trên `.174`) |
 | [`web.config`](web.config) | Cấu hình IIS reverse proxy cho site `hustcrm.jvs.com.vn` |
+| [`setup-github-runner.ps1`](setup-github-runner.ps1) | Cài GitHub Actions self-hosted runner trên `.174` để bật CD tự động |
+| [`../.github/workflows/cd.yml`](../.github/workflows/cd.yml) | Workflow CD: push vào `main` + CI xanh → tự deploy |
 
 ---
 
@@ -174,3 +176,64 @@ ssh jvsadm-174 "C:\apps\tools\nssm.exe restart hustcrm"
 1. Đăng nhập `admin@hust.edu.vn` với mật khẩu đã đặt ở `$env:CRM_SEED_PASSWORD`.
 2. **Đổi ngay mật khẩu** của mọi tài khoản seed (màn *Cán bộ & Phân quyền*).
 3. Kiểm nhanh: Dashboard, Hồ sơ DN, Pipeline, MOU, Việc làm, Sự kiện, Nhắc việc, Cán bộ.
+
+---
+
+## 8. CI/CD — tự động deploy khi push
+
+### 8.1. Luồng hoạt động
+
+```
+git push origin main
+      │
+      ▼
+CI (.github/workflows/ci.yml)          ← chạy trên runner cloud của GitHub
+   npm ci → lint → test → build
+      │  chỉ khi XANH
+      ▼
+CD (.github/workflows/cd.yml)          ← chạy trên self-hosted runner tại .174
+   build → dừng service → cập nhật code → npm install --omit=dev
+   → prisma generate → khởi động service → kiểm HTTP 200
+```
+
+**Vì sao cần self-hosted runner:** `.174` chỉ có IP nội bộ `192.168.59.174`, GitHub
+Actions trên cloud **không SSH vào được**. Runner cài tại chỗ tự *kéo* job về qua HTTPS
+outbound — không phải mở port, không phải cấp IP public, **không lưu SSH key trên GitHub**.
+
+### 8.2. Bật CD (làm một lần)
+
+```powershell
+# 1. Lấy token đăng ký runner (hết hạn sau 1 giờ):
+#    https://github.com/tunguyenquang/university-enterprise-crm/settings/actions/runners/new
+#    → chọn Windows x64 → copy giá trị sau `--token`
+
+$env:GH_RUNNER_TOKEN = '<token vừa copy>'
+powershell -NoProfile -File deploy/setup-github-runner.ps1
+
+# 2. Kiểm tra: runner "hustcrm-174" hiện trạng thái Idle ở trang Runners
+```
+
+Script tự kiểm tiền đề (Node, thư mục app đã dựng), tải runner, đăng ký với repo và
+cài làm **Windows Service** để tự khởi động cùng máy. Gỡ: thêm cờ `-Uninstall`.
+
+### 8.3. Phạm vi của CD — CHỈ cập nhật code
+
+CD **không** chạy `prisma migrate deploy`, **không** seed. Đây là quyết định vận hành có
+chủ đích: một lần push không được phép tự động thay đổi cấu trúc hay dữ liệu của database
+đang phục vụ. Khi bản phát hành có migration mới, chạy tay:
+
+```bash
+ssh jvsadm-174 "powershell -Command \"Set-Location 'C:\inetpub\wwwroot\hustcrm.jvs.com.vnpp'; npx prisma migrate deploy\""
+```
+
+Hoặc dùng script deploy đầy đủ từ máy local (`deploy-to-174.ps1`, có migrate; thêm
+`-Seed` nếu thực sự muốn nạp lại dữ liệu mẫu).
+
+### 8.4. Cơ chế an toàn trong CD
+
+- **Chỉ deploy khi CI xanh** (`workflow_run` + kiểm `conclusion == 'success'`) → không đẩy code lỗi lên server.
+- **`concurrency` group** → hai lần deploy không chạy song song ghi đè nhau.
+- **Dừng service trước khi ghi file** → Windows khoá file đang dùng, không dừng thì copy sẽ lỗi.
+- **Xoá `dist` cũ** → không còn sót file js/css của bản build trước (tên có hash).
+- **Kiểm HTTP 200 với 6 lần thử**; nếu thất bại thì **in 30 dòng cuối `app.err.log` và fail job** — không báo thành công trên một app đã chết.
+- Có thể **bấm deploy tay** từ tab Actions (`workflow_dispatch`) khi cần.

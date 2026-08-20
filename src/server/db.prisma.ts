@@ -40,7 +40,26 @@ import {
   DepartmentType,
 } from "../types/crm.ts";
 
-const prisma = new PrismaClient();
+// Khoi tao TRE (lazy): chi tao PrismaClient khi that su co truy van dau tien.
+//
+// Vi sao can: db.ts import module nay o top-level BAT KE DB_BACKEND la gi. Neu tao
+// PrismaClient ngay day thi tren moi truong chua chay "prisma generate" (vd CI chi
+// cai dependencies roi chay test voi backend JSON), dong import se nem
+// "@prisma/client did not initialize yet" va lam chet toan bo test - du khong he
+// dung Prisma. Proxy duoi day giu nguyen 78 cho goi "prisma.xxx" san co.
+let prismaInstance: PrismaClient | null = null;
+function getPrisma(): PrismaClient {
+  if (!prismaInstance) {
+    prismaInstance = new PrismaClient();
+  }
+  return prismaInstance;
+}
+
+const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getPrisma(), prop, receiver);
+  },
+});
 
 // ---- Helpers chuyển đổi kiểu ----
 const iso = (d: Date | null | undefined): string => (d ? d.toISOString() : "");

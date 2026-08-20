@@ -76,6 +76,21 @@ let db: DatabaseSchema = {
   credentials: {}
 };
 
+// Bỏ các khóa có giá trị undefined khỏi payload cập nhật.
+//
+// Vì sao cần: các schema update là `.partial()`, nên trường không được gửi lên sẽ là
+// `undefined`. Nếu spread thẳng (`{ ...cũ, ...mới }`) thì `undefined` GHI ĐÈ giá trị cũ
+// thành undefined — tức một lần PUT chỉ đổi `status` sẽ xoá mất các trường khác.
+// Backend Prisma đã bỏ qua `undefined` (chỉ gán khi `!== undefined`), helper này giữ
+// cho backend JSON hành xử giống hệt, vì cả hai cùng implement DbService.
+function omitUndefined<T extends object>(patch: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
+}
+
 // Băm mật khẩu bằng bcrypt (an toàn, có salt). Đồng bộ cho đơn giản khi seed/tạo user.
 export function hashPassword(password: string): string {
   return bcrypt.hashSync(password, config.bcryptRounds);
@@ -942,10 +957,13 @@ const sync = {
   updateJob: (id: string, jobData: Partial<Job>) => {
     const index = db.jobs.findIndex(j => j.id === id);
     if (index === -1) return null;
-    db.jobs[index] = {
-      ...db.jobs[index],
-      ...jobData
-    };
+    // Giu hanh vi GIONG backend Prisma (xem db.prisma.ts updateJob):
+    //  - bo qua truong undefined (khong duoc gui len) thay vi ghi de bang undefined
+    //  - description/salary la cot NOT NULL o schema Postgres -> quy null ve ""
+    const patch = omitUndefined(jobData);
+    if ("description" in patch) patch.description = patch.description ?? "";
+    if ("salary" in patch) patch.salary = patch.salary ?? "";
+    db.jobs[index] = { ...db.jobs[index], ...patch };
     saveDatabase();
     return db.jobs[index];
   },
@@ -974,10 +992,11 @@ const sync = {
   updateEvent: (id: string, evData: Partial<Event>) => {
     const index = db.events.findIndex(e => e.id === id);
     if (index === -1) return null;
-    db.events[index] = {
-      ...db.events[index],
-      ...evData
-    };
+    // Nhu updateJob: bo qua truong undefined de PUT mot phan khong xoa du lieu cu
+    // (vd chi doi status thi enterpriseIds/departmentIds/budget phai giu nguyen).
+    const patch = omitUndefined(evData);
+    if ("location" in patch) patch.location = patch.location ?? "";
+    db.events[index] = { ...db.events[index], ...patch };
     saveDatabase();
     return db.events[index];
   },
