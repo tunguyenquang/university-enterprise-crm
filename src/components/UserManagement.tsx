@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from "react";
 import { User, Department, Role } from "../types/crm.ts";
 import { api } from "../lib/api.ts";
+import { initialsOf } from "../lib/crmLabels.ts";
 import { Shield, Plus, X, UserX, Edit2 } from "lucide-react";
 
 interface Props {
@@ -146,7 +147,7 @@ export default function UserManagement({
             <div key={u.id} className="py-3 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="h-8 w-8 flex items-center justify-center rounded-full bg-blue-50 text-blue-600 text-xs font-black">
-                  {u.fullName.slice(-2)}
+                  {initialsOf(u.fullName)}
                 </div>
                 <div className="min-w-0">
                   <h5 className="text-xs font-bold text-slate-800 flex items-center gap-2">

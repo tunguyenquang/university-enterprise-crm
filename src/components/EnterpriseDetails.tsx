@@ -3,6 +3,10 @@ import {
   Enterprise, Contact, Interaction, PartnershipDocument, Job, Event, User, Department,
   EnterpriseStatus, EnterprisePriority, InteractionType, DocumentStatus, DocumentType, JobType, JobStatus
 } from "../types/crm.ts";
+import {
+  DOCUMENT_STATUS_LABELS, DOCUMENT_STATUS_COLORS, DOCUMENT_TYPE_LABELS,
+  INTERACTION_TYPE_LABELS, JOB_TYPE_LABELS, JOB_STATUS_LABELS, JOB_STATUS_COLORS, labelOf, initialsOf,
+} from "../lib/crmLabels.ts";
 import { 
   ArrowLeft, Building2, User2, Mail, Phone, ExternalLink, Calendar, MapPin, Tag, Plus, Trash2, Edit2, Check, AlertCircle, FileText, CheckSquare, Briefcase, ListTodo, Save, X, Info
 } from "lucide-react";
@@ -454,7 +458,7 @@ export default function EnterpriseDetails({
                   
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 flex items-center justify-center rounded-full bg-blue-100 text-blue-700 font-bold text-sm">
-                      {enterprise.pic?.fullName.slice(-2) || "A"}
+                      {initialsOf(enterprise.pic?.fullName)}
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-gray-800">{enterprise.pic?.fullName || "Chưa phân công"}</h4>
@@ -886,8 +890,8 @@ export default function EnterpriseDetails({
                           
                           {/* Inner head row metadata */}
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[10px] bg-slate-900 text-amber-300 font-bold font-mono px-2 py-0.5 rounded-sm">
-                              {int.type}
+                            <span className="text-[10px] bg-slate-900 text-amber-300 font-bold px-2 py-0.5 rounded-sm">
+                              {labelOf(INTERACTION_TYPE_LABELS, int.type)}
                             </span>
                             <span className="text-xs text-gray-400 font-mono font-semibold">
                               ⌛ {new Date(int.date).toLocaleDateString("vi-VN")} {new Date(int.date).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
@@ -1144,17 +1148,14 @@ export default function EnterpriseDetails({
                             <span className="font-mono font-black text-sm text-blue-700 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-lg">
                               {mou.code}
                             </span>
-                            <span className="text-[11px] font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded font-mono">
-                              {mou.type}
+                            <span className="text-[11px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
+                              {labelOf(DOCUMENT_TYPE_LABELS, mou.type)}
                             </span>
                             
-                            <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded ${
-                              mou.status === DocumentStatus.DA_KY ? "bg-emerald-50 border border-emerald-100 text-emerald-700" :
-                              mou.status === DocumentStatus.SOAN_THAO ? "bg-gray-100 text-gray-600" :
-                              mou.status === DocumentStatus.TRINH_KY ? "bg-cyan-50 text-cyan-700" :
-                              "bg-red-100 text-red-700"
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                              DOCUMENT_STATUS_COLORS[mou.status] || "bg-gray-100 text-gray-600 border-gray-200"
                             }`}>
-                              {mou.status}
+                              {labelOf(DOCUMENT_STATUS_LABELS, mou.status)}
                             </span>
                           </div>
 
@@ -1424,13 +1425,13 @@ export default function EnterpriseDetails({
                       <div className="flex items-start justify-between">
                         <div>
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[9px] bg-blue-50 border border-blue-100 font-bold font-mono text-blue-700 px-2 py-0.5 rounded">
-                              {job.type}
+                            <span className="text-[9px] bg-blue-50 border border-blue-100 font-bold text-blue-700 px-2 py-0.5 rounded">
+                              {labelOf(JOB_TYPE_LABELS, job.type)}
                             </span>
-                            <span className={`text-[10px] sm:text-[9px] font-bold font-mono uppercase px-1.5 py-0.5 rounded ${
-                              job.status === JobStatus.ACTIVE ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-gray-100 text-gray-500"
+                            <span className={`text-[10px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                              JOB_STATUS_COLORS[job.status] || "bg-gray-100 text-gray-500 border-gray-200"
                             }`}>
-                              {job.status}
+                              {labelOf(JOB_STATUS_LABELS, job.status)}
                             </span>
                           </div>
 

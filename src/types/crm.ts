@@ -136,6 +136,9 @@ export interface User {
   role?: Role;
   departmentId: string | null;
   department?: Department;
+  // Danh sách mã quyền suy ra từ vai trò (backend trả kèm khi login / GET /api/auth/me).
+  // Chỉ dùng để ẩn/hiện nút trên UI; việc chặn thật vẫn do backend enforce.
+  permissions?: string[];
   createdAt: string;
 }
 

@@ -1055,12 +1055,13 @@ const sync = {
     saveDatabase();
     return newNotif;
   },
-  markNotificationRead: (id: string) => {
-    const notif = db.notifications.find(n => n.id === id);
-    if (notif) {
-      notif.isRead = true;
-      saveDatabase();
-    }
+  markNotificationRead: (id: string, userId: string) => {
+    // Chi chu so huu moi danh dau duoc thong bao cua minh (chong IDOR).
+    const notif = db.notifications.find(n => n.id === id && n.userId === userId);
+    if (!notif) return false;
+    notif.isRead = true;
+    saveDatabase();
+    return true;
   },
 
   // Audit Logs
@@ -1270,9 +1271,7 @@ export const jsonDbService: DbService = {
 
   getNotifications: async (userId) => sync.getNotifications(userId),
   createNotification: async (notif) => sync.createNotification(notif),
-  markNotificationRead: async (id) => {
-    sync.markNotificationRead(id);
-  },
+  markNotificationRead: async (id, userId) => sync.markNotificationRead(id, userId),
 
   getAuditLogs: async () => sync.getAuditLogs(),
   createAuditLog: async (log) => sync.createAuditLog(log),

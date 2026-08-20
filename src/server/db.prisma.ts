@@ -653,11 +653,13 @@ export const prismaDbService: DbService = {
     if (data.title !== undefined) patch.title = data.title;
     if (data.type !== undefined) patch.type = data.type;
     if (data.quantity !== undefined) patch.quantity = data.quantity;
-    if (data.description !== undefined) patch.description = data.description;
+    // description / salary la cot NOT NULL trong schema: quy null ve chuoi rong
+    // (dung hanh vi cua createJob) thay vi de Prisma nem loi -> API 500.
+    if (data.description !== undefined) patch.description = data.description ?? "";
     if (data.requirements !== undefined) patch.requirements = data.requirements;
     if (data.majors !== undefined) patch.majors = data.majors;
     if (data.location !== undefined) patch.location = data.location;
-    if (data.salary !== undefined) patch.salary = data.salary;
+    if (data.salary !== undefined) patch.salary = data.salary ?? "";
     if (data.dateDeadline !== undefined) patch.dateDeadline = new Date(data.dateDeadline);
     if (data.contactName !== undefined) patch.contactName = data.contactName;
     if (data.contactEmail !== undefined) patch.contactEmail = data.contactEmail;
@@ -707,7 +709,8 @@ export const prismaDbService: DbService = {
     if (data.title !== undefined) patch.title = data.title;
     if (data.type !== undefined) patch.type = data.type;
     if (data.date !== undefined) patch.date = new Date(data.date);
-    if (data.location !== undefined) patch.location = data.location;
+    // location la cot NOT NULL: khong de null lot xuong Prisma (xem updateJob).
+    if (data.location !== undefined) patch.location = data.location ?? "";
     if (data.description !== undefined) patch.description = data.description;
     if (data.budget !== undefined) patch.budget = data.budget;
     if (data.joinCount !== undefined) patch.joinCount = data.joinCount;
@@ -824,12 +827,15 @@ export const prismaDbService: DbService = {
     });
     return mapNotification(n);
   },
-  markNotificationRead: async (id) => {
-    try {
-      await prisma.notification.update({ where: { id }, data: { isRead: true } });
-    } catch {
-      // bỏ qua nếu không tồn tại
-    }
+  markNotificationRead: async (id, userId) => {
+    // updateMany + dieu kien userId: ban ghi khong thuoc user nay thi count = 0,
+    // khong nem loi va cung khong sua gi. Dung update() theo id tran se cho phep
+    // bat ky ai danh dau da doc thong bao cua nguoi khac (IDOR).
+    const result = await prisma.notification.updateMany({
+      where: { id, userId },
+      data: { isRead: true },
+    });
+    return result.count > 0;
   },
 
   // ---- Audit logs ----

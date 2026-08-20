@@ -98,7 +98,9 @@ export interface DbService {
   // Notifications
   getNotifications(userId: string): Promise<Notification[]>;
   createNotification(notif: Omit<Notification, "id" | "isRead" | "createdAt">): Promise<Notification>;
-  markNotificationRead(id: string): Promise<void>;
+  // userId la BAT BUOC: chi chu so huu moi danh dau duoc thong bao cua minh.
+  // Tra ve false khi khong tim thay hoac khong thuoc user do (chong IDOR).
+  markNotificationRead(id: string, userId: string): Promise<boolean>;
 
   // Audit logs
   getAuditLogs(): Promise<AuditLog[]>;

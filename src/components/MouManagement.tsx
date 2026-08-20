@@ -1,5 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { PartnershipDocument, Enterprise, Department, User, DocumentType, DocumentStatus } from "../types/crm.ts";
+import {
+  DOCUMENT_STATUS_LABELS, DOCUMENT_STATUS_COLORS, DOCUMENT_TYPE_LABELS, labelOf,
+} from "../lib/crmLabels.ts";
 import { 
   FileText, Search, Filter, Plus, Calendar, AlertTriangle, CheckCircle2, 
   Trash2, Edit2, Download, Eye, ExternalLink, HelpCircle, X, ChevronDown, ChevronUp, RefreshCw
@@ -528,13 +531,10 @@ export default function MouManagement({
                           <div className="mt-1">{getExpiryLabel(mou.expiryDate, mou.status)}</div>
                         </td>
                         <td className="p-4 text-center">
-                          <span className={`text-[10px] font-mono tracking-widest font-black uppercase px-2 py-1 rounded-md border ${
-                            mou.status === DocumentStatus.DA_KY ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
-                            mou.status === DocumentStatus.HET_HAN ? "bg-red-50 text-red-700 border-red-100" :
-                            mou.status === DocumentStatus.SOAN_THAO ? "bg-gray-100 text-gray-700 border-gray-200" :
-                            "bg-amber-50 text-amber-700 border-amber-200"
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-md border ${
+                            DOCUMENT_STATUS_COLORS[mou.status] || "bg-gray-100 text-gray-700 border-gray-200"
                           }`}>
-                            {mou.status}
+                            {labelOf(DOCUMENT_STATUS_LABELS, mou.status)}
                           </span>
                         </td>
                         <td className="p-4" onClick={e => e.stopPropagation()}>
@@ -578,7 +578,7 @@ export default function MouManagement({
                                 <div className="bg-white border border-gray-100 rounded-xl p-3 shadow-3xs space-y-2">
                                   <div className="flex justify-between border-b border-slate-50 pb-1.5">
                                     <span className="text-gray-400">Loại văn bản:</span>
-                                    <span className="font-bold font-mono text-slate-800 uppercase">{mou.type}</span>
+                                    <span className="font-bold text-slate-800">{labelOf(DOCUMENT_TYPE_LABELS, mou.type)}</span>
                                   </div>
                                   <div className="flex justify-between border-b border-slate-50 pb-1.5">
                                     <span className="text-gray-400">Ngày ký thỏa thuận:</span>
@@ -633,10 +633,10 @@ export default function MouManagement({
                     <span className="text-[11px] font-mono font-black text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded">
                       {mou.code}
                     </span>
-                    <span className={`text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded border ${
-                      mou.status === DocumentStatus.DA_KY ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-red-50 text-red-700 border-red-100"
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                      DOCUMENT_STATUS_COLORS[mou.status] || "bg-gray-100 text-gray-700 border-gray-200"
                     }`}>
-                      {mou.status}
+                      {labelOf(DOCUMENT_STATUS_LABELS, mou.status)}
                     </span>
                   </div>
 

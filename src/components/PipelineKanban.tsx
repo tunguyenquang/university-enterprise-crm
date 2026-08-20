@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Enterprise, EnterpriseStatus, EnterprisePriority } from "../types/crm.ts";
-import { ArrowLeft, ArrowRight, ArrowRightLeft, Building2, Eye, Shield, Tag, Star } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowRightLeft, Building2, Eye, PauseCircle, RotateCcw, Shield, Tag, Star } from "lucide-react";
 
 interface PipelineKanbanProps {
   token: string;
@@ -10,24 +10,36 @@ interface PipelineKanbanProps {
 }
 
 export default function PipelineKanban({ token, enterprises, onUpdateEnterpriseStatus, onViewEnterpriseDetails }: PipelineKanbanProps) {
-  // Define active pipeline stages
-  const stages: { code: EnterpriseStatus; title: string; color: string; desc: string }[] = [
-    { code: EnterpriseStatus.TIEM_NANG, title: "Tiềm năng", color: "border-t-4 border-t-slate-400 bg-slate-50/50", desc: "DN đề đề xuất hoặc tìm thấy qua cổng thông tin" },
+  // 5 chặng chính của pipeline - đi tuần tự bằng nút tiến/lùi trên thẻ.
+  const activeStages: { code: EnterpriseStatus; title: string; color: string; desc: string }[] = [
+    { code: EnterpriseStatus.TIEM_NANG, title: "Tiềm năng", color: "border-t-4 border-t-slate-400 bg-slate-50/50", desc: "DN được đề xuất hoặc tìm thấy qua cổng thông tin" },
     { code: EnterpriseStatus.DANG_TIEP_CAN, title: "Tiếp cận", color: "border-t-4 border-t-cyan-500 bg-cyan-50/30", desc: "Đang gọi điện, email, gửi thư mời hợp tác" },
     { code: EnterpriseStatus.DANG_TRAO_DOI, title: "Trao đổi", color: "border-t-4 border-t-orange-500 bg-orange-50/30", desc: "Thương lượng điều khoản, thảo luận quyền lợi" },
     { code: EnterpriseStatus.DA_KY_MOU, title: "Ký kết MOU", color: "border-t-4 border-t-blue-600 bg-blue-50/30", desc: "Xong văn bản, cam kết hợp tác lâu dài" },
-    { code: EnterpriseStatus.DANG_TRIEN_KHAI, title: "Triển khai", color: "border-t-4 border-t-emerald-600 bg-emerald-50/30", desc: "Đưa sinh viên thực tập, mở workshop, tài trợ" }
+    { code: EnterpriseStatus.DANG_TRIEN_KHAI, title: "Triển khai", color: "border-t-4 border-t-emerald-600 bg-emerald-50/30", desc: "Đưa sinh viên thực tập, mở workshop, tài trợ" },
   ];
 
-  // Helper to shift enterprise stage
+  // 2 chặng kết thúc - KHÔNG nằm trong luồng tiến/lùi tuần tự. Trước đây hai trạng thái này
+  // không có cột nào nên DN tạm ngưng / ngừng hợp tác biến mất khỏi Kanban và không có cách
+  // đưa trở lại pipeline; giờ hiển thị thành cột riêng kèm nút đưa về "Tiềm năng".
+  const closedStages: { code: EnterpriseStatus; title: string; color: string; desc: string }[] = [
+    { code: EnterpriseStatus.TAM_NGUNG, title: "Tạm ngưng", color: "border-t-4 border-t-amber-500 bg-amber-50/30", desc: "Tạm dừng hợp tác, có thể khởi động lại sau" },
+    { code: EnterpriseStatus.NGUNG_HOP_TAC, title: "Ngừng hợp tác", color: "border-t-4 border-t-red-500 bg-red-50/20", desc: "Đã kết thúc quan hệ hợp tác hoàn toàn" },
+  ];
+
+  const stages = [...activeStages, ...closedStages];
+
+  // Dịch DN sang chặng liền trước/liền sau trong 5 chặng chính.
   const moveStage = (enterprise: Enterprise, step: number) => {
-    const currentIndex = stages.findIndex(s => s.code === enterprise.status);
+    const currentIndex = activeStages.findIndex(s => s.code === enterprise.status);
     if (currentIndex === -1) return;
     const nextIndex = currentIndex + step;
-    if (nextIndex >= 0 && nextIndex < stages.length) {
-      onUpdateEnterpriseStatus(enterprise.id, stages[nextIndex].code);
+    if (nextIndex >= 0 && nextIndex < activeStages.length) {
+      onUpdateEnterpriseStatus(enterprise.id, activeStages[nextIndex].code);
     }
   };
+
+  const isClosedStage = (code: EnterpriseStatus) => closedStages.some(s => s.code === code);
 
   const priorityColors: Record<EnterprisePriority, string> = {
     [EnterprisePriority.CHIEN_LUOC]: "bg-red-50 text-red-700 border border-red-200",
@@ -64,7 +76,7 @@ export default function PipelineKanban({ token, enterprises, onUpdateEnterpriseS
       </div>
 
       {/* Board Columns rendering */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 overflow-x-auto pb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7 gap-4 pb-4">
         {stages.map((stage) => {
           const matchingEnts = enterprises.filter(e => e.status === stage.code);
           return (
@@ -143,25 +155,48 @@ export default function PipelineKanban({ token, enterprises, onUpdateEnterpriseS
                         </button>
                         
                         <div className="flex space-x-1">
-                          {/* Shift stage back */}
-                          <button 
-                            disabled={stages.findIndex(s => s.code === stage.code) === 0}
-                            onClick={() => moveStage(enterprise, -1)}
-                            className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition disabled:opacity-30 disabled:hover:bg-transparent focus:outline-none"
-                            title="Lùi một bước"
-                          >
-                            <ArrowLeft className="h-3.5 w-3.5" />
-                          </button>
+                          {isClosedStage(stage.code) ? (
+                            /* Cột kết thúc: chỉ có đường đưa DN trở lại đầu pipeline */
+                            <button
+                              onClick={() => onUpdateEnterpriseStatus(enterprise.id, EnterpriseStatus.TIEM_NANG)}
+                              className="flex items-center gap-1 px-1.5 py-1 text-[10px] font-bold text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition focus:outline-none"
+                              title="Đưa doanh nghiệp trở lại pipeline (Tiềm năng)"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              Kích hoạt lại
+                            </button>
+                          ) : (
+                            <>
+                              {/* Lùi một chặng */}
+                              <button
+                                disabled={activeStages.findIndex(s => s.code === stage.code) === 0}
+                                onClick={() => moveStage(enterprise, -1)}
+                                className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition disabled:opacity-30 disabled:hover:bg-transparent focus:outline-none"
+                                title="Lùi một bước"
+                              >
+                                <ArrowLeft className="h-3.5 w-3.5" />
+                              </button>
 
-                          {/* Shift stage forward */}
-                          <button 
-                            disabled={stages.findIndex(s => s.code === stage.code) === stages.length - 1}
-                            onClick={() => moveStage(enterprise, 1)}
-                            className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition disabled:opacity-30 disabled:hover:bg-transparent focus:outline-none"
-                            title="Tiến một bước"
-                          >
-                            <ArrowRight className="h-3.5 w-3.5" />
-                          </button>
+                              {/* Tiến một chặng */}
+                              <button
+                                disabled={activeStages.findIndex(s => s.code === stage.code) === activeStages.length - 1}
+                                onClick={() => moveStage(enterprise, 1)}
+                                className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition disabled:opacity-30 disabled:hover:bg-transparent focus:outline-none"
+                                title="Tiến một bước"
+                              >
+                                <ArrowRight className="h-3.5 w-3.5" />
+                              </button>
+
+                              {/* Đường ra khỏi pipeline: chuyển sang Tạm ngưng */}
+                              <button
+                                onClick={() => onUpdateEnterpriseStatus(enterprise.id, EnterpriseStatus.TAM_NGUNG)}
+                                className="p-1 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition focus:outline-none"
+                                title="Chuyển sang Tạm ngưng"
+                              >
+                                <PauseCircle className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>

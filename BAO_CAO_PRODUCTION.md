@@ -155,12 +155,70 @@ Các việc được chia thành **3 nhóm theo độ ưu tiên**:
 | 19 | Backup database | 🟢 | ✅ *(script backup + mẫu pg_dump)* |
 | 20 | Sửa lỗi nhỏ trong seed data | 🟢 | ✅ |
 
-> **Cập nhật ngày 23/06/2026:** Đã hoàn thành **19/20 hạng mục**. Database thật PostgreSQL (Prisma) đã hoạt động, kèm cờ `DB_BACKEND` cho phép chuyển đổi json ⇄ prisma. Lint sạch (0 lỗi), build production thành công, **56/56 test pass trên CẢ HAI backend** (JSON & PostgreSQL), server production khởi động & login JWT + truy vấn dữ liệu hoạt động thực tế trên Postgres.
->
-> **Còn lại:** #13 (AI) — giữ package `@google/genai` theo yêu cầu, chưa tích hợp tính năng. Phần deploy/host thực tế của #18 (chọn nơi host, HTTPS, domain) cần quyết định hạ tầng cụ thể.
+> **Cập nhật ngày 23/06/2026:** Đã hoàn thành **19/20 hạng mục** của bảng trên (DB thật PostgreSQL qua Prisma, JWT + bcrypt, phân quyền, validation Zod, CRUD master data, upload, CORS/helmet/rate-limit, logging, cron, testing, CI).
 
 ---
 
-## 5. Tóm lại một câu
+## 6. Cập nhật 21/08/2026 — hoàn thiện chức năng, kiểm thử toàn diện & deploy thật
 
-> Dự án hiện **chạy được để demo**, nhưng **3 thứ then chốt là DB giả, đăng nhập không an toàn, và phân quyền chưa gắn** khiến nó **chưa thể lên production**. Ưu tiên số 1 là làm **Giai đoạn 1**.
+### 6.1. Đã lên môi trường thật
+
+| Hạng mục | Giá trị |
+|---|---|
+| URL | **https://hustcrm.jvs.com.vn** |
+| Máy chủ | VPS `.174` (`jvsadm-174`, Windows Server 2025) |
+| Kiến trúc | IIS (HTTPS + reverse proxy ARR) → Node.js `127.0.0.1:3090` (Windows Service `hustcrm` qua NSSM) |
+| Code | `C:\inetpub\wwwroot\hustcrm.jvs.com.vnpp` |
+| Database | PostgreSQL 18 trên chính `.174`, database `university_crm` |
+| Cert | Cloudflare Origin Certificate dùng chung `*.jvs.com.vn` (store `WebHosting`) |
+| Script | [`deploy/`](deploy/README.md) — `deploy-to-174.ps1`, `backup-db.ps1`, `web.config` |
+
+Đã kiểm chứng **16 site khác trên cùng máy không bị ảnh hưởng**, và cấu hình server-level
+(`allowedServerVariables`) giữ nguyên rỗng.
+
+### 6.2. Chức năng đã hoàn thiện
+
+| # | Việc | Trạng thái |
+|---|---|---|
+| 21 | Nhãn tiếng Việt cho toàn bộ enum (trước lộ `DANG_TRIEN_KHAI`, `DA_KY`, `HIGH`, `INTERN`… ra UI, kể cả trong dropdown) | ✅ |
+| 22 | Kanban đủ **7 trạng thái** (trước chỉ 5 → DN *Tạm ngưng* / *Ngừng hợp tác* biến mất khỏi bảng, không có cách đưa lại pipeline) | ✅ |
+| 23 | Tab **Nhu cầu Việc làm**: thêm tạo/sửa/xóa, tìm kiếm, lọc theo loại hình & trạng thái, hiện đủ số lượng/ngành/địa điểm | ✅ |
+| 24 | Tab **Sự kiện**: thêm tạo/sửa/xóa, lọc, hiện **tên doanh nghiệp/đơn vị** thay cho ID thô (`e-fpt`), hiện ngân sách | ✅ |
+| 25 | Tab **Nhắc việc**: thêm sửa/xóa, lọc theo trạng thái/mức ưu tiên/cán bộ, đếm ngày quá hạn | ✅ |
+| 26 | Màn **quản lý Khoa/Phòng/Trung tâm** (backend đã có CRUD nhưng chưa có UI) | ✅ |
+| 27 | Avatar hiển thị viết tắt tên đúng (trước dùng `slice(-2)` ra "ng", "ài", "ơi") | ✅ |
+| 28 | Auto-focus ô nhập đầu tiên ở màn đăng nhập | ✅ |
+| 29 | Seed bổ sung **nhật ký tương tác** (trước không có → tab *Lịch sử tương tác* luôn trống) và **thông báo** | ✅ |
+
+### 6.3. Lỗi & lỗ hổng đã phát hiện và sửa
+
+| Mức | Vấn đề | Xử lý |
+|---|---|---|
+| HIGH | `PUT /api/jobs/:id` trả **500**: `updateJob` truyền `null` xuống cột NOT NULL (`description`, `salary`). Chỉ lộ ra khi UI có chức năng sửa | Quy `null` → `""` đúng như `createJob`; thêm test hồi quy |
+| HIGH | `PUT`/`DELETE /api/tasks/:id` **không kiểm chủ sở hữu** — ai đăng nhập biết ID đều sửa/xóa việc của người khác | Thêm `loadTaskForWrite`: chỉ assignee / creator / quản lý; 5 test hồi quy |
+| HIGH | Assignee tự đổi `assigneeId` sẽ **mất quyền vào chính công việc vừa sửa** | Chỉ creator/quản lý được chuyển việc |
+| HIGH | `PUT /api/events/:id` **xoá sạch DN/đơn vị liên kết** khi cập nhật một phần (`undefined` → `[]`), ngân sách bị ép về `null` | Giữ `undefined` để tầng DB bỏ qua; thêm test |
+| HIGH | **IDOR**: `POST /api/notifications/:id/read` không kiểm chủ sở hữu — người khác đánh dấu đã đọc, nạn nhân mất cảnh báo MOU hết hạn | `markNotificationRead(id, userId)` + `updateMany` có điều kiện; 2 test |
+| CRITICAL | Script deploy **hardcode mật khẩu** DB và mật khẩu seed (sắp bị commit lên GitHub) | Đọc từ `$env:PG174_PASSWORD` / `$env:CRM_SEED_PASSWORD`, bắt buộc set trước khi chạy |
+| MEDIUM | Deploy **tự seed** mọi lần → ghi đè dữ liệu thật, kích hoạt lại tài khoản đã vô hiệu hoá | Tách sang cờ `-Seed` tường minh |
+| MEDIUM | 6 route `jobs`/`events`/`tasks` thiếu **audit log** (mất dấu vết ai xoá) | Bổ sung, tổng 29 điểm ghi log |
+| MEDIUM | `DELETE` luôn báo thành công dù không tìm thấy (nuốt lỗi) | Trả 404 đúng thực tế |
+| MEDIUM | Phân quyền so **ID seed** `"r-admin"` → role tạo mới không có quyền, im lặng | Dùng `RoleCode` / danh sách quyền |
+| MEDIUM | Test dùng **DB dev**, để lại rác ("DN Atomic", "MOU-SAP-HET-HAN-TEST") hiện ra giao diện; và mã DN cố định làm test **chạy lần 2 là đỏ** | Cô lập DB `_test` + `scripts/reset-test-db.mjs` (chốt an toàn: từ chối nếu tên DB không kết thúc `_test`) |
+
+### 6.4. Kết quả kiểm thử
+
+| Hạng mục | Kết quả |
+|---|---|
+| `npm run lint` (tsc) | **0 lỗi** |
+| `npm test` | **67/67 pass**, chạy lặp lại được |
+| Kiểm thử UI tự động (Playwright, 27 mục: CRUD 4 màn, nhãn tiếng Việt, Kanban 7 cột, phân quyền) | **27/27 pass** trên **cả local và production** |
+| Kiểm layout (scroll thừa, console error, API lỗi) ở 1920px và 1366px, 8 tab | **0 phát hiện** |
+| Thử truy cập file nhạy cảm (`/app/.env`, `/app/dist/server.cjs`, `/web.config`, `/logs/*`) | **404 rỗng** — không lộ file |
+| Phân quyền thật trên production (tài khoản *Lãnh đạo* thử tạo DN/job/event/đơn vị) | **403** cả 4 |
+
+### 6.5. Việc còn lại
+
+- ☐ **Đổi mật khẩu mọi tài khoản seed** (hiện dùng mật khẩu khởi tạo chung; bản backup trong `backups/` chứa hash tương ứng).
+- ☐ Tách `FormDialog` dùng chung cho 4 màn CRUD mới và áp quy ước a11y (auto-focus, focus-trap, nút × cuối Tab, không đóng khi click nền) — chức năng đã chạy đúng, đây là việc dọn kiến trúc.
+- ☐ Hạng mục #13 (tích hợp AI) vẫn giữ nguyên: package `@google/genai` chưa dùng.

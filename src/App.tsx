@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   User, Department, Enterprise, PartnershipDocument, Job, Event, Task, Notification, AuditLog,
   EnterpriseStatus, EnterprisePriority, InteractionType, DocumentStatus, DocumentType, JobType, JobStatus, TaskStatus, TaskPriority, RoleCode
@@ -8,6 +8,15 @@ import PipelineKanban from "./components/PipelineKanban.tsx";
 import EnterpriseDetails from "./components/EnterpriseDetails.tsx";
 import MouManagement from "./components/MouManagement.tsx";
 import UserManagement from "./components/UserManagement.tsx";
+import JobManagement from "./components/JobManagement.tsx";
+import EventManagement from "./components/EventManagement.tsx";
+import TaskManagement from "./components/TaskManagement.tsx";
+import DepartmentManagement from "./components/DepartmentManagement.tsx";
+import {
+  ENTERPRISE_STATUS_LABELS, ENTERPRISE_STATUS_COLORS, ENTERPRISE_PRIORITY_LABELS,
+  JOB_TYPE_LABELS, EVENT_TYPE_LABELS, EVENT_STATUS_LABELS, EVENT_STATUS_COLORS,
+  TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS, labelOf, initialsOf,
+} from "./lib/crmLabels.ts";
 import { 
   Building2, FileText, Briefcase, Calendar, CheckSquare, Shield, LogOut, Search, Plus, Filter, Download, ArrowRightLeft, UserCheck, Bell, Check, Trash2, Edit2, ShieldAlert, Award, Grid, Menu, X, ToggleLeft, RefreshCcw, Info
 } from "lucide-react";
@@ -25,6 +34,15 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+
+  // Auto-focus ô nhập đầu tiên khi vào màn đăng nhập để người dùng gõ được ngay,
+  // không phải với tay lấy chuột. setTimeout(0) để chờ layout dựng xong mới focus.
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (token) return;
+    const timer = setTimeout(() => emailInputRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [token]);
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<"dashboard" | "enterprises" | "kanban" | "mous" | "jobs" | "events" | "tasks" | "users">("dashboard");
@@ -48,7 +66,6 @@ export default function App() {
   const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(null);
   const [enterpriseModalOpen, setEnterpriseModalOpen] = useState(false);
   const [mouModalOpen, setMouModalOpen] = useState(false);
-  const [taskModalOpen, setTaskModalOpen] = useState(false);
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState("");
@@ -72,10 +89,6 @@ export default function App() {
     picId: "", content: "", status: DocumentStatus.DA_KY, fileUrl: ""
   });
 
-  const [newTaskForm, setNewTaskForm] = useState<any>({
-    title: "", description: "", dueDate: new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString().substring(0, 10),
-    priority: TaskPriority.MEDIUM, status: TaskStatus.TODO, enterpriseId: "", assigneeId: ""
-  });
 
 
   // ==========================================
@@ -337,52 +350,8 @@ export default function App() {
   };
 
   // Create Task
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          ...newTaskForm,
-          assigneeId: newTaskForm.assigneeId || user.id
-        })
-      });
-
-      if (!res.ok) throw new Error("Chắp cánh tạo task thất bại");
-      setTaskModalOpen(false);
-      setNewTaskForm({
-        title: "", description: "", dueDate: new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString().substring(0, 10),
-        priority: TaskPriority.MEDIUM, status: TaskStatus.TODO, enterpriseId: "", assigneeId: ""
-      });
-      loadCrmData();
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
 
   // Complete/Toggle Task inline
-  const handleToggleTaskStatus = async (task: Task) => {
-    const nextStatus = task.status === TaskStatus.COMPLETED ? TaskStatus.TODO : TaskStatus.COMPLETED;
-    try {
-      const res = await fetch(`/api/tasks/${task.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: nextStatus })
-      });
-      if (res.ok) {
-        loadCrmData();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
   // Mark all notifications as read
   const handleMarkNotifRead = async (id: string) => {
@@ -431,6 +400,22 @@ export default function App() {
 
   const activeNotis = notifications.filter(n => !n.isRead);
 
+  // Kiểm tra quyền để ẩn/hiện nút trên UI. Backend vẫn là nơi chặn thật (requirePermission),
+  // nên đây chỉ là lớp trải nghiệm: không hiện nút mà bấm vào sẽ nhận 403.
+  const can = (permission: string): boolean => (user?.permissions || []).includes(permission);
+
+  // Đổi danh sách ID doanh nghiệp thành tên đọc được (sự kiện chỉ trả về mảng ID).
+  // ID lạ (DN đã xoá mềm) vẫn hiện được thay vì để lộ chuỗi "e-xxx" ra giao diện.
+  const enterpriseNamesOf = (ids: string[]): string => {
+    if (!ids || ids.length === 0) return "—";
+    return ids
+      .map(id => {
+        const found = enterprises.find(e => e.id === id);
+        return found ? (found.shortName || found.name) : id;
+      })
+      .join(", ");
+  };
+
   // ==========================================
   // VIEW RENDER CONSTRUCT (NOT AUTHENTICATED -> RENDER LOGIN)
   // ==========================================
@@ -463,6 +448,7 @@ export default function App() {
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Địa chỉ Email Cán bộ (.edu.vn) *</label>
                 <input 
+                  ref={emailInputRef}
                   type="email" 
                   required 
                   placeholder="E.g., admin@hust.edu.vn"
@@ -604,7 +590,7 @@ export default function App() {
             <div className="p-4 border-b border-slate-800/60 bg-slate-950/20">
               <div className="flex items-center space-x-3">
                 <div className="h-9 w-9 flex items-center justify-center rounded-full bg-blue-600 text-white text-xs font-black">
-                  {user.fullName.slice(-2)}
+                  {initialsOf(user.fullName)}
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-white truncate">{user.fullName}</p>
@@ -789,7 +775,7 @@ export default function App() {
                       >
                         <option value="">-- Trạng thái hợp tác --</option>
                         {Object.values(EnterpriseStatus).map(st => (
-                          <option key={st} value={st}>{st}</option>
+                          <option key={st} value={st}>{ENTERPRISE_STATUS_LABELS[st]}</option>
                         ))}
                       </select>
 
@@ -800,7 +786,7 @@ export default function App() {
                       >
                         <option value="">-- Mức ưu tiên --</option>
                         {Object.values(EnterprisePriority).map(pr => (
-                          <option key={pr} value={pr}>{pr}</option>
+                          <option key={pr} value={pr}>{ENTERPRISE_PRIORITY_LABELS[pr]}</option>
                         ))}
                       </select>
 
@@ -855,23 +841,21 @@ export default function App() {
                               </td>
                               <td className="p-4">
                                 <span className={`px-2.5 py-1 border rounded-md font-bold ${
-                                  ent.status === EnterpriseStatus.DANG_TRIEN_KHAI ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
-                                  ent.status === EnterpriseStatus.DA_KY_MOU ? "bg-blue-50 text-blue-700 border-blue-100" :
-                                  ent.status === EnterpriseStatus.DANG_TRAO_DOI ? "bg-orange-50 text-orange-700 border-orange-100" :
-                                  "bg-gray-150 text-gray-600"
+                                  ENTERPRISE_STATUS_COLORS[ent.status] || "bg-gray-100 text-gray-600 border-gray-200"
                                 }`}>
-                                  {ent.status}
+                                  {labelOf(ENTERPRISE_STATUS_LABELS, ent.status)}
                                 </span>
                               </td>
                               <td className="p-4">
-                                <span className="font-bold font-mono text-gray-800">
-                                  {ent.priority === EnterprisePriority.CHIEN_LUOC ? "⭐ Chiến lược" : ent.priority}
+                                <span className="font-bold text-gray-800">
+                                  {ent.priority === EnterprisePriority.CHIEN_LUOC ? "⭐ " : ""}
+                                  {labelOf(ENTERPRISE_PRIORITY_LABELS, ent.priority)}
                                 </span>
                               </td>
                               <td className="p-4">
                                 <div className="flex items-center space-x-2">
                                   <div className="h-6 w-6 flex items-center justify-center rounded-full bg-slate-100 text-[10px] font-black text-gray-600 shrink-0">
-                                    {ent.pic?.fullName.slice(-2) || "AN"}
+                                    {initialsOf(ent.pic?.fullName)}
                                   </div>
                                   <span className="font-medium text-slate-600 truncate">{ent.pic?.fullName || "N/A"}</span>
                                 </div>
@@ -924,143 +908,60 @@ export default function App() {
                 />
               )}
 
-              {/* TAB 5: STUDENT CAREERS AND INTERNSHIPS SELECTION */}
+              {/* TAB 5: NHU CẦU VIỆC LÀM & THỰC TẬP */}
               {activeTab === "jobs" && (
-                <div className="space-y-6 animate-fade-in">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                    {jobsList.map(job => (
-                      <div key={job.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-3xs hover:shadow-2xs transition flex flex-col justify-between h-56 space-y-3">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded font-mono uppercase">
-                              {job.type}
-                            </span>
-                            <span className="text-[11px] font-bold font-mono text-emerald-600">{job.salary}</span>
-                          </div>
-                          <h4 className="text-xs font-black text-slate-800 line-clamp-1 leading-normal">{job.title}</h4>
-                          <p className="text-[10px] text-blue-600 font-bold truncate">🏢 {job.enterpriseName}</p>
-                          <p className="text-xs text-gray-500 leading-normal line-clamp-2">{job.description}</p>
-                        </div>
-                        
-                        <div className="pt-2 border-t border-gray-50 text-[10px] font-mono font-semibold text-gray-400 flex items-center justify-between mt-auto">
-                          <span>📅 Hạn chót: {new Date(job.dateDeadline).toLocaleDateString("vi-VN")}</span>
-                          <span className="font-sans text-gray-600 font-bold">{job.contactName || "HR Department"}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 6: EVENTS SECTION */}
-              {activeTab === "events" && (
-                <div className="space-y-6 animate-fade-in">
-                  <div className="space-y-4">
-                    {eventsList.map(ev => (
-                      <div key={ev.id} className="bg-white p-5 rounded-2xl border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:shadow-3xs transition">
-                        <div className="space-y-2 flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-black px-2 py-0.5 rounded">
-                              {ev.type}
-                            </span>
-                            <span className="text-xs text-gray-400 font-mono font-bold">
-                              {new Date(ev.date).toLocaleDateString("vi-VN")}
-                            </span>
-                          </div>
-                          <h4 className="text-sm font-black text-slate-800 truncate leading-normal">{ev.title}</h4>
-                          <p className="text-xs text-gray-500 font-medium">📍 {ev.location} • Có khoảng {ev.joinCount} Sinh viên/Cán bộ đã đăng ký.</p>
-                          <p className="text-xs text-blue-600 font-mono font-semibold">
-                            🤝 Đồng hành cùng: {ev.enterpriseIds.join(", ")}
-                          </p>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <span className="inline-block px-4 py-1.5 font-bold font-mono text-xs text-gray-700 bg-slate-50 border border-gray-100 rounded-xl leading-none">
-                            {ev.status}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 7: TASKS & ACTION LOGS */}
-              {activeTab === "tasks" && (
-                <div className="space-y-6 animate-fade-in">
-                  <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs flex items-center justify-between">
-                    <div>
-                      <h2 className="text-sm font-bold text-gray-900 flex items-center">
-                        <CheckSquare className="h-5 w-5 mr-1.5 text-blue-600" />
-                        Danh sách công việc & Giao việc nội bộ
-                      </h2>
-                      <p className="text-xs text-gray-400 mt-1">Lệt kê toàn bộ task cần follow up các cuộc tương tác.</p>
-                    </div>
-
-                    <button 
-                      onClick={() => setTaskModalOpen(true)}
-                      className="px-4 py-1.5 bg-blue-600 text-white hover:bg-blue-700 font-bold text-xs rounded-xl shadow-xs transition"
-                    >
-                      + Phân công việc mới
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    {tasksList.map(task => (
-                      <div 
-                        key={task.id} 
-                        className="bg-white p-4.5 rounded-2xl border border-gray-100 flex items-center justify-between gap-4 shadow-3xs"
-                        id={`task-${task.id}`}
-                      >
-                        <div className="flex items-center space-x-3.5 flex-1 min-w-0">
-                          <input 
-                            type="checkbox" 
-                            checked={task.status === TaskStatus.COMPLETED} 
-                            onChange={() => handleToggleTaskStatus(task)}
-                            className="h-4.5 w-4.5 border-gray-300 rounded text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
-                          />
-                          <div className="min-w-0">
-                            <h4 className={`text-xs sm:text-sm font-bold text-slate-800 ${task.status === TaskStatus.COMPLETED ? "line-through text-gray-400" : ""}`}>
-                              {task.title}
-                            </h4>
-                            <p className="text-[10px] text-gray-400 mt-0.5 font-semibold font-mono truncate leading-normal">
-                              🎯 Doanh nghiệp: {task.enterpriseName} • 👥 Cán bộ: {task.assigneeName}
-                            </p>
-                            {task.description && <p className="text-xs text-gray-400 italic line-clamp-1 mt-1 font-medium">{task.description}</p>}
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0 flex flex-col items-end gap-1 font-mono text-[10px]">
-                          <span className={`px-2 py-0.5 rounded font-black ${
-                            task.priority === TaskPriority.HIGH ? "bg-red-50 text-red-600 border border-red-200" : "bg-gray-50 text-gray-600"
-                          }`}>
-                            {task.priority}
-                          </span>
-                          <span className="text-slate-400 font-bold mt-1">⏰ {new Date(task.dueDate).toLocaleDateString("vi-VN")}</span>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    {tasksList.length === 0 && (
-                      <div className="py-12 border border-dashed border-gray-200 rounded-2xl text-center text-slate-400">
-                        <CheckSquare className="h-8 w-8 mx-auto opacity-30 mb-2" />
-                        <p className="text-xs font-semibold">Tất cả các công vụ đã hoàn thành.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 8: USERS & PERMISSIONS SYSTEM ROLES MAPPING */}
-              {activeTab === "users" && (
-                <UserManagement
+                <JobManagement
                   token={token}
-                  currentUserId={user.id}
-                  canManage={(user.permissions || []).includes("manage_users")}
-                  usersList={usersList}
+                  canManage={can("manage_jobs")}
+                  jobsList={jobsList}
+                  enterprises={enterprises}
+                  onChanged={loadCrmData}
+                />
+              )}
+
+              {/* TAB 6: SỰ KIỆN PHỐI HỢP */}
+              {activeTab === "events" && (
+                <EventManagement
+                  token={token}
+                  canManage={can("manage_events")}
+                  eventsList={eventsList}
+                  enterprises={enterprises}
                   departmentsList={departmentsList}
                   onChanged={loadCrmData}
                 />
+              )}
+
+              {/* TAB 7: NHẮC VIỆC & FOLLOW-UP */}
+              {activeTab === "tasks" && (
+                <TaskManagement
+                  token={token}
+                  currentUserId={user.id}
+                  tasksList={tasksList}
+                  enterprises={enterprises}
+                  usersList={usersList}
+                  onChanged={loadCrmData}
+                />
+              )}
+
+              {/* TAB 8: CÁN BỘ, PHÂN QUYỀN & DANH MỤC ĐƠN VỊ */}
+              {activeTab === "users" && (
+                <div className="space-y-6 animate-fade-in">
+                  <UserManagement
+                    token={token}
+                    currentUserId={user.id}
+                    canManage={can("manage_users")}
+                    usersList={usersList}
+                    departmentsList={departmentsList}
+                    onChanged={loadCrmData}
+                  />
+                  <DepartmentManagement
+                    token={token}
+                    canManage={can("manage_master_data")}
+                    departmentsList={departmentsList}
+                    usersList={usersList}
+                    onChanged={loadCrmData}
+                  />
+                </div>
               )}
             </>
           )}
@@ -1159,7 +1060,7 @@ export default function App() {
                     className="w-full text-xs font-semibold p-2.5 border border-gray-300 bg-white rounded-lg focus:outline-none"
                   >
                     {Object.values(EnterpriseStatus).map(st => (
-                      <option key={st} value={st}>{st}</option>
+                      <option key={st} value={st}>{ENTERPRISE_STATUS_LABELS[st]}</option>
                     ))}
                   </select>
                 </div>
@@ -1171,7 +1072,7 @@ export default function App() {
                     className="w-full text-xs font-semibold p-2.5 border border-gray-300 bg-white rounded-lg focus:outline-none"
                   >
                     {Object.values(EnterprisePriority).map(pr => (
-                      <option key={pr} value={pr}>{pr}</option>
+                      <option key={pr} value={pr}>{ENTERPRISE_PRIORITY_LABELS[pr]}</option>
                     ))}
                   </select>
                 </div>
@@ -1386,117 +1287,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal 3: Dispatch manual follow-up task */}
-      {taskModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-2xs flex items-center justify-center p-4 z-50 animate-fade-in text-left whitespace-normal">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-gray-100 p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-              <h3 className="text-sm font-extrabold text-gray-900 uppercase tracking-widest flex items-center">
-                <CheckSquare className="h-5 w-5 text-blue-600 mr-1.5" />
-                Giao phó công việc liên quan hoạt động DN
-              </h3>
-              <button onClick={() => setTaskModalOpen(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateTask} className="space-y-4">
-              <div className="space-y-1 text-xs font-semibold">
-                <label className="text-gray-500 block">Tiêu đề công vụ *</label>
-                <input 
-                  type="text" 
-                  required 
-                  placeholder="E.g., Gửi thư mời hội thảo cho chị Thao HR"
-                  value={newTaskForm.title} 
-                  onChange={e => setNewTaskForm({ ...newTaskForm, title: e.target.value })}
-                  className="w-full p-2 bg-white border border-gray-300 rounded-lg text-xs font-bold"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 text-xs font-semibold">
-                <div className="space-y-1">
-                  <label className="text-gray-500 block">Phân công cán bộ làm *</label>
-                  <select 
-                    required 
-                    value={newTaskForm.assigneeId} 
-                    onChange={e => setNewTaskForm({ ...newTaskForm, assigneeId: e.target.value })}
-                    className="w-full p-2 bg-white border border-gray-300 rounded-lg text-xs"
-                  >
-                    <option value="">-- Chọn Chuyên viên --</option>
-                    {usersList.map(u => (
-                      <option key={u.id} value={u.id}>{u.fullName}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-gray-500 block">Thời hạn hoàn thành *</label>
-                  <input 
-                    type="date" 
-                    required 
-                    value={newTaskForm.dueDate} 
-                    onChange={e => setNewTaskForm({ ...newTaskForm, dueDate: e.target.value })}
-                    className="w-full p-2 bg-white border border-gray-300 rounded-lg text-xs"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-gray-500 block">Doanh nghiệp phối hợp</label>
-                  <select 
-                    value={newTaskForm.enterpriseId} 
-                    onChange={e => setNewTaskForm({ ...newTaskForm, enterpriseId: e.target.value })}
-                    className="w-full p-2 bg-white border border-gray-300 rounded-lg text-xs"
-                  >
-                    <option value="">Không bắt buộc</option>
-                    {enterprises.map(e => (
-                      <option key={e.id} value={e.id}>{e.shortName || e.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-gray-500 block">Chỉ định Mức ưu tiên</label>
-                  <select 
-                    value={newTaskForm.priority} 
-                    onChange={e => setNewTaskForm({ ...newTaskForm, priority: e.target.value as any })}
-                    className="w-full p-2 bg-white border border-gray-300 rounded-lg text-xs"
-                  >
-                    <option value={TaskPriority.LOW}>Thấp</option>
-                    <option value={TaskPriority.MEDIUM}>Thường</option>
-                    <option value={TaskPriority.HIGH}>🔥 Khẩn cấp</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-1 text-xs font-semibold">
-                <label className="text-gray-500 block">Yêu cầu giao phó chi tiết</label>
-                <textarea 
-                  value={newTaskForm.description} 
-                  onChange={e => setNewTaskForm({ ...newTaskForm, description: e.target.value })}
-                  placeholder="Nói rõ mục tiêu cuộc gọi, email mẫu hay các kết quả mong mỏi..."
-                  className="w-full p-2 bg-white border border-gray-300 rounded-lg text-xs h-16"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-gray-150 flex justify-end gap-2">
-                <button 
-                  type="button" 
-                  onClick={() => setTaskModalOpen(false)}
-                  className="px-4 py-2 bg-gray-100 text-gray-600 font-bold text-xs rounded-xl"
-                >
-                  Hủy bỏ
-                </button>
-                <button 
-                  type="submit" 
-                  className="px-4 py-2 bg-blue-600 text-white font-bold text-xs rounded-xl"
-                >
-                  Giao việc
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
     </div>
   );

@@ -41,6 +41,8 @@ import {
   JobType,
   JobStatus,
   EventStatus,
+  RoleCode,
+  Task,
   TaskStatus,
   TaskPriority,
 } from "../types/crm.ts";
@@ -81,9 +83,12 @@ const apiLimiter = rateLimit({
 app.use("/api", apiLimiter);
 
 // Rate limit chặt hơn cho đăng nhập: chống dò mật khẩu (brute-force).
+// Riêng môi trường test được nới hẳn: bộ integration test đăng nhập nhiều tài khoản
+// trong vài giây nên sẽ chạm ngưỡng 10 lần và làm test đỏ oan. Production/dev
+// vẫn giữ đúng 10 lần / 15 phút / IP.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10, // tối đa 10 lần thử / 15 phút / IP
+  max: config.nodeEnv === "test" ? 10000 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Quá nhiều lần đăng nhập thất bại, vui lòng thử lại sau 15 phút." },
@@ -813,6 +818,15 @@ app.put(
       status: data.status,
     });
 
+    await dbService.createAuditLog({
+      userId: req.user!.id,
+      action: "UPDATE_JOB",
+      module: "JOB",
+      recordId: id,
+      description: `Cập nhật tin tuyển dụng: ${current.title}.`,
+      ipAddress: clientIp(req),
+    });
+
     res.json(updated);
   })
 );
@@ -822,7 +836,22 @@ app.delete(
   requireAuth,
   requirePermission("manage_jobs"),
   wrap(async (req, res) => {
-    await dbService.deleteJob(req.params.id);
+    const current = await dbService.getJobById(req.params.id);
+    // deleteJob tra false khi khong tim thay -> khong bao "thanh cong" gia.
+    const ok = await dbService.deleteJob(req.params.id);
+    if (!ok) {
+      return res.status(404).json({ message: "Không tìm thấy tin tuyển dụng" });
+    }
+
+    await dbService.createAuditLog({
+      userId: req.user!.id,
+      action: "DELETE_JOB",
+      module: "JOB",
+      recordId: req.params.id,
+      description: `Xóa tin tuyển dụng: ${current?.title || req.params.id}.`,
+      ipAddress: clientIp(req),
+    });
+
     res.json({ success: true, message: "Xóa thành công" });
   })
 );
@@ -889,12 +918,35 @@ app.put(
       date: data.date,
       location: data.location,
       description: data.description,
-      budget: data.budget !== undefined && data.budget !== null ? Number(data.budget) : null,
+      // KHONG dung "|| []" / "?? null" cho cac truong khong duoc gui len:
+      // eventUpdateSchema la .partial() nen PUT chi doi status se co
+      // enterpriseIds === undefined. Bien undefined thanh [] se lam tang DB
+      // deleteMany xoa sach DN/don vi da lien ket. Giu nguyen undefined de
+      // tang DB bo qua truong do (xem db.prisma.ts updateEvent).
+      budget:
+        data.budget === undefined
+          ? undefined
+          : data.budget === null
+            ? null
+            : Number(data.budget),
       joinCount: data.joinCount !== undefined ? Number(data.joinCount) : undefined,
       status: data.status,
-      enterpriseIds: data.enterpriseIds || [],
-      departmentIds: data.departmentIds || [],
+      enterpriseIds: data.enterpriseIds,
+      departmentIds: data.departmentIds,
     });
+    if (!updated) {
+      return res.status(404).json({ message: "Không tìm thấy sự kiện" });
+    }
+
+    await dbService.createAuditLog({
+      userId: req.user!.id,
+      action: "UPDATE_EVENT",
+      module: "EVENT",
+      recordId: id,
+      description: `Cập nhật sự kiện: ${updated.title}.`,
+      ipAddress: clientIp(req),
+    });
+
     res.json(updated);
   })
 );
@@ -904,14 +956,31 @@ app.delete(
   requireAuth,
   requirePermission("manage_events"),
   wrap(async (req, res) => {
-    await dbService.deleteEvent(req.params.id);
-    res.json({ success: true });
+    const current = await dbService.getEventById(req.params.id);
+    const ok = await dbService.deleteEvent(req.params.id);
+    if (!ok) {
+      return res.status(404).json({ message: "Không tìm thấy sự kiện" });
+    }
+
+    await dbService.createAuditLog({
+      userId: req.user!.id,
+      action: "DELETE_EVENT",
+      module: "EVENT",
+      recordId: req.params.id,
+      description: `Xóa sự kiện: ${current?.title || req.params.id}.`,
+      ipAddress: clientIp(req),
+    });
+
+    res.json({ success: true, message: "Xóa thành công" });
   })
 );
 
 // --- TASKS MGR ---
 app.get("/api/tasks", requireAuth, wrap(async (req, res) => {
-  const list = await dbService.getTasks(req.user!.roleId !== "r-admin" ? req.user!.id : undefined);
+  // Quan ly xem duoc toan bo cong viec; can bo thuong chi xem viec cua minh.
+  // Dung RoleCode/quyen thay vi so ID seed ("r-admin") de role tao moi van hoat dung.
+  const isManager = await isManagerUser(req.user!);
+  const list = await dbService.getTasks(isManager ? undefined : req.user!.id);
   const ents = await dbService.getEnterprises();
   const users = await dbService.getUsers();
 
@@ -946,26 +1015,111 @@ app.post(
       creatorId,
     });
 
+    await dbService.createAuditLog({
+      userId: creatorId,
+      action: "CREATE_TASK",
+      module: "TASK",
+      recordId: task.id,
+      description: `Giao công việc: ${task.title}.`,
+      ipAddress: clientIp(req),
+    });
+
     res.status(201).json(task);
   })
 );
+
+// Kiểm quyền trên MỘT công việc cụ thể: chỉ người được gán, người tạo,
+// hoặc tài khoản quản lý (SUPER_ADMIN / có manage_users) mới được sửa - xóa.
+// Trước đây hai route này chỉ có requireAuth nên bất kỳ ai đăng nhập biết ID
+// đều sửa/xóa được công việc của người khác, dù GET đã lọc theo assignee.
+async function isManagerUser(user: { id: string; roleId: string }): Promise<boolean> {
+  const roles = await dbService.getRoles();
+  const role = roles.find((r) => r.id === user.roleId);
+  return (
+    role?.code === RoleCode.SUPER_ADMIN ||
+    dbService.getPermissionsForRole(user.roleId).includes("manage_users")
+  );
+}
+
+async function loadTaskForWrite(
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<{ ok: true; task: Task; isManager: boolean } | { ok: false }> {
+  const task = await dbService.getTaskById(req.params.id);
+  if (!task) {
+    res.status(404).json({ message: "Không tìm thấy công việc" });
+    return { ok: false };
+  }
+
+  const user = req.user!;
+  const isManager = await isManagerUser(user);
+  if (task.assigneeId === user.id || task.creatorId === user.id || isManager) {
+    return { ok: true, task, isManager };
+  }
+
+  res.status(403).json({ message: "Chỉ cán bộ phụ trách, người giao việc hoặc quản lý mới được thao tác công việc này" });
+  return { ok: false };
+}
 
 app.put(
   "/api/tasks/:id",
   requireAuth,
   validateBody(taskUpdateSchema),
   wrap(async (req, res) => {
+    const guard = await loadTaskForWrite(req as AuthenticatedRequest, res);
+    if (!guard.ok) return;
+
+    // Chi nguoi giao viec (creator) hoac quan ly duoc chuyen viec sang nguoi khac.
+    // Neu de assignee tu doi assigneeId thi ho se KHONG con quyen vao chinh task
+    // vua sua (khong phai assignee, khong phai creator) va task bien khoi danh
+    // sach cua ho - khong co duong tu khoi phuc.
+    const nextAssignee = req.body.assigneeId;
+    if (nextAssignee !== undefined && nextAssignee !== guard.task.assigneeId) {
+      const canReassign = guard.isManager || guard.task.creatorId === req.user!.id;
+      if (!canReassign) {
+        return res.status(403).json({
+          message: "Chỉ người giao việc hoặc quản lý mới được đổi cán bộ phụ trách",
+        });
+      }
+    }
+
     const updated = await dbService.updateTask(req.params.id, req.body);
     if (!updated) {
       return res.status(404).json({ message: "Không tìm thấy công việc" });
     }
+
+    await dbService.createAuditLog({
+      userId: req.user!.id,
+      action: "UPDATE_TASK",
+      module: "TASK",
+      recordId: req.params.id,
+      description: `Cập nhật công việc: ${updated.title}.`,
+      ipAddress: clientIp(req),
+    });
+
     res.json(updated);
   })
 );
 
 app.delete("/api/tasks/:id", requireAuth, wrap(async (req, res) => {
-  await dbService.deleteTask(req.params.id);
-  res.json({ success: true });
+  const guard = await loadTaskForWrite(req as AuthenticatedRequest, res);
+  if (!guard.ok) return;
+
+  const ok = await dbService.deleteTask(req.params.id);
+  if (!ok) {
+    return res.status(404).json({ message: "Không tìm thấy công việc" });
+  }
+
+  await dbService.createAuditLog({
+    userId: req.user!.id,
+    action: "DELETE_TASK",
+    module: "TASK",
+    recordId: req.params.id,
+    description: `Xóa công việc: ${guard.task.title}.`,
+    ipAddress: clientIp(req),
+  });
+
+  res.json({ success: true, message: "Xóa thành công" });
 }));
 
 // --- ALERTS & NOTIFICATIONS ---
@@ -977,7 +1131,12 @@ app.get("/api/notifications", requireAuth, wrap(async (req, res) => {
 }));
 
 app.post("/api/notifications/:id/read", requireAuth, wrap(async (req, res) => {
-  await dbService.markNotificationRead(req.params.id);
+  // Truyen userId de chi chu so huu danh dau duoc thong bao cua minh.
+  // Tra 404 (khong phai 403) de khong tiet lo su ton tai cua ban ghi nguoi khac.
+  const ok = await dbService.markNotificationRead(req.params.id, req.user!.id);
+  if (!ok) {
+    return res.status(404).json({ message: "Không tìm thấy thông báo" });
+  }
   res.json({ success: true });
 }));
 

@@ -21,6 +21,30 @@ process.env.JWT_EXPIRES_IN = "1h";
 process.env.BCRYPT_ROUNDS = "4"; // nhanh hơn cho test
 process.env.SEED_DEFAULT_PASSWORD = "Password123!";
 
+// Nap .env ngay tai day: config.ts goi dotenv.config() nhung chi khi module do duoc import,
+// tuc SAU doan nay. Khong nap truoc thi DB_BACKEND / DATABASE_URL con rong va nhanh doi
+// DB sang ban _test duoi day khong chay -> test lai ghi vao DB dev.
+// dotenv khong ghi de bien da co san nen cac dong process.env.* o tren van thang.
+const dotenv = await import("dotenv");
+dotenv.default.config();
+
+// Khi chay test tren backend Prisma, BAT BUOC tro vao DB test rieng.
+// Truoc day test dung DATABASE_URL cua .env nen ghi thang vao DB dev, de lai
+// du lieu rac ("DN Atomic", "DN Staff Tao", "MOU-SAP-HET-HAN-TEST"...) hien ra giao dien.
+// Uu tien TEST_DATABASE_URL; neu khong khai thi tu doi ten DB sang "<db>_test".
+if ((process.env.DB_BACKEND || "json") === "prisma") {
+  const explicit = process.env.TEST_DATABASE_URL;
+  if (explicit) {
+    process.env.DATABASE_URL = explicit;
+  } else {
+    const current = process.env.DATABASE_URL || "";
+    if (current && !/_test(\?|$)/.test(current)) {
+      // Chen hau to _test vao ten database, giu nguyen query string (vd ?schema=public).
+      process.env.DATABASE_URL = current.replace(/\/([^/?]+)(\?|$)/, "/$1_test$2");
+    }
+  }
+}
+
 // Import sau khi đã set env. Dùng dynamic import để đảm bảo thứ tự.
 const { app } = await import("../server.ts");
 
