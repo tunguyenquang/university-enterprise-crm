@@ -1,0 +1,454 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+// ==========================================
+// AUTH & PHÂN QUYỀN (RBAC & ORGANIZATION)
+// ==========================================
+
+model User {
+  id               String            @id @default(uuid())
+  email            String            @unique
+  passwordHash     String
+  fullName         String
+  phone            String?
+  isActive         Boolean           @default(true)
+  
+  // Quan hệ Tổ chức
+  departmentId     String?
+  department       Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  
+  // RBAC
+  roleId           String
+  role             Role              @relation(fields: [roleId], references: [id])
+  
+  // Phụ trách
+  enterprises      Enterprise[]      @relation("EnterprisePIC")
+  mous             PartnershipDocument[] @relation("MOUFollowUp")
+  interactions     Interaction[]     @relation("InteractionPIC")
+  assignedTasks    Task[]            @relation("TaskAssignee")
+  createdTasks     Task[]            @relation("TaskCreator")
+  notifications    Notification[]
+  
+  // Audit logs
+  auditLogs        AuditLog[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  @@index([email])
+  @@index([roleId])
+  @@index([departmentId])
+  @@map("users")
+}
+
+model Role {
+  id               String            @id @default(uuid())
+  name             String            @unique // E.g., "Super Admin", "Lãnh đạo", "Chuyên viên QHDN"
+  code             String            @unique // E.g., "SUPER_ADMIN", "LEADER", "QHDN_STAFF"
+  description      String?
+  
+  users            User[]
+  permissions      RolePermission[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  
+  @@map("roles")
+}
+
+model Permission {
+  id               String            @id @default(uuid())
+  name             String            @unique // E.g., "Xem tất cả DN"
+  code             String            @unique // E.g., "view_all_enterprises"
+  group            String            // E.g., "ENTERPRISE", "MOU", "AUTH"
+  
+  roles            RolePermission[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId           String
+  permissionId     String
+  
+  role             Role              @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission       Permission        @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Department {
+  id               String            @id @default(uuid())
+  name             String            @unique // E.g., "Khoa CNTT", "Phòng Quan hệ Doanh nghiệp"
+  code             String            @unique // E.g., "F_CNTT", "P_QHDN"
+  type             String            // KHOA (Faculty), PHONG (Department), TRUNG_TAM (Center)
+  parentId         String?
+  parent           Department?       @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children         Department[]      @relation("DepartmentHierarchy")
+  
+  users            User[]
+  enterpriseFaculties EnterpriseFaculty[]
+  enterpriseMajors    EnterpriseMajor[]
+  mous             PartnershipDocument[]
+  events           EventDepartment[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@map("departments")
+}
+
+// ==========================================
+// MODULE HOẠT ĐỘNG HOẠT ĐỘNG DOANH NGHIỆP
+// ==========================================
+
+model Enterprise {
+  id               String            @id @default(uuid())
+  code             String            @unique // E.g., "DN-FPT", "DN-VIETTEL"
+  name             String
+  shortName        String?
+  taxCode          String?
+  field            String            // Lĩnh vực chính (CNTT, Tài chính, Giáo dục...)
+  scale            String            // Quy mô: <50, 50-200, 200-500, >500
+  type             String            // Loại: Tư nhân Việt Nam, Nhà nước, FDI, Đa quốc gia...
+  address          String
+  city             String            // Tỉnh/Thành
+  website          String?
+  linkedin         String?
+  description      String?
+  
+  // Trạng thái hợp tác & Mức độ ưu tiên
+  status           String            // TIEM_NANG | DANG_TIEP_CAN | DANG_TRAO_DOI | DA_KY_MOU | DANG_TRIEN_KHAI | TAM_NGUNG | NGUNG_HOP_TAC
+  priority         String            // CHIEN_LUOC | QUAN_TRONG | TIEM_NANG | THUONG
+  
+  // Phân công phụ trách trong trường
+  picId            String?
+  pic              User?             @relation("EnterprisePIC", fields: [picId], references: [id], onDelete: SetNull)
+  
+  // Ghi chú & Tags
+  internalNotes    String?
+  tags             EnterpriseTag[]
+  
+  // Liên kết Đơn vị đào tạo (Khoa/Ngành liên quan)
+  faculties        EnterpriseFaculty[]
+  majors           EnterpriseMajor[]
+
+  // Trích xuất quan hệ khác
+  contacts         Contact[]
+  interactions     Interaction[]
+  mous             PartnershipDocument[]
+  jobs             Job[]
+  events           EventEnterprise[]
+  tasks            Task[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  @@index([code])
+  @@index([status])
+  @@index([priority])
+  @@index([picId])
+  @@map("enterprises")
+}
+
+model EnterpriseTag {
+  id               String            @id @default(uuid())
+  name             String            // E.g., "AI", "Automotive", "Tài trợ học bổng"
+  enterpriseId     String
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+
+  @@unique([name, enterpriseId])
+  @@map("enterprise_tags")
+}
+
+model EnterpriseFaculty {
+  enterpriseId     String
+  departmentId     String
+  
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  department       Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([enterpriseId, departmentId])
+  @@map("enterprise_faculties")
+}
+
+model EnterpriseMajor {
+  enterpriseId     String
+  departmentId     String // Mapping đại diện khoa/ngành
+  
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  department       Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([enterpriseId, departmentId])
+  @@map("enterprise_majors")
+}
+
+model Contact {
+  id               String            @id @default(uuid())
+  enterpriseId     String
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  
+  name             String
+  position         String            // Chức vụ
+  department       String?           // Phòng ban của doanh nghiệp
+  email            String?
+  phone            String?
+  zalo             String?
+  linkedin         String?
+  notes            String?
+  
+  isPrimary        Boolean           @default(false)
+  isActive         Boolean           @default(true) // Còn làm việc | Đã nghỉ việc
+
+  interactions     InteractionContact[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([enterpriseId])
+  @@map("contacts")
+}
+
+// ==========================================
+// MODULE LỊCH SỬ TƯƠNG TÁC (INTERACTION LOG)
+// ==========================================
+
+model Interaction {
+  id               String            @id @default(uuid())
+  enterpriseId     String
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  
+  date             DateTime          @default(now())
+  type             String            // CALL, EMAIL, MEETING_OFFLINE, MEETING_ONLINE, VISIT, WORKSHOP, MOU_SIGNING...
+  content          String            // Nội dung làm việc
+  result           String?           // Kết quả đạt được
+  
+  followUpTasks    String?           // Việc cần theo dõi sau đó
+  followUpDeadline DateTime?         // Deadline follow up
+  followUpStatus   String            @default("NONE") // NONE | PENDING | COMPLETED
+  
+  picId            String?
+  pic              User?             @relation("InteractionPIC", fields: [picId], references: [id], onDelete: SetNull)
+  
+  contacts         InteractionContact[]
+  tasks            Task[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([enterpriseId])
+  @@index([picId])
+  @@map("interactions")
+}
+
+model InteractionContact {
+  interactionId    String
+  contactId        String
+  
+  interaction      Interaction       @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+  contact          Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([interactionId, contactId])
+  @@map("interaction_contacts")
+}
+
+// ==========================================
+// MODULE THỎA THUẬN HỢP TÁC (MOU / MOA)
+// ==========================================
+
+model PartnershipDocument {
+  id               String            @id @default(uuid())
+  code             String            @unique // Số văn bản: E.g., "12/2026/MOU-FPT"
+  type             String            // MOU (Memorandum of Understanding), MOA, CONTRACT, OTHER
+  
+  enterpriseId     String
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  
+  departmentId     String            // Đơn vị đầu mối triển khai trong trường
+  department       Department        @relation(fields: [departmentId], references: [id])
+  
+  signDate         DateTime
+  effectiveDate    DateTime
+  expiryDate       DateTime
+  
+  picId            String?           // Người theo dõi chính
+  pic              User?             @relation("MOUFollowUp", fields: [picId], references: [id], onDelete: SetNull)
+  
+  content          String            // Nội dung chính
+  status           String            // SOAN_THAO | TRINH_KY | DA_KY | HET_HAN | THANH_LY
+  fileUrl          String?
+  
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([enterpriseId])
+  @@index([departmentId])
+  @@map("partnership_documents")
+}
+
+// ==========================================
+// MODULE TUYỂN DỤNG & THỰC TẬP (JOBS)
+// ==========================================
+
+model Job {
+  id               String            @id @default(uuid())
+  enterpriseId     String
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  
+  title            String            // Tiêu đề tuyển dụng
+  type             String            // FULLTIME | PARTTIME | INTERN | CTV
+  quantity         Int               @default(1)
+  description      String
+  requirements     String?
+  majors           String            // Các ngành phù hợp (Text search hoặc json)
+  
+  location         String?
+  salary           String            // Thỏa thuận, khoảng lương, v.v.
+  dateDeadline     DateTime
+  
+  contactName      String?
+  contactEmail     String?
+  contactPhone     String?
+  
+  status           String            // NEW | ACTIVE | CLOSED | COMPLETED
+  
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([enterpriseId])
+  @@map("jobs")
+}
+
+// ==========================================
+// MODULE SỰ KIỆN HỢP TÁC (EVENTS)
+// ==========================================
+
+model Event {
+  id               String            @id @default(uuid())
+  title            String
+  type             String            // WORKSHOP, SEMINAR, JOB_FAIR, COMPANY_TOUR, SPONSORSHIP, MENTORSHIP
+  date             DateTime
+  location         String
+  description      String?
+  
+  budget           Decimal?          @db.Decimal(12, 2)
+  joinCount        Int               @default(0) // Số lượng SV tham gia
+  status           String            // UPCOMING | ONGOING | COMPLETED | CANCELLED
+  
+  enterprises      EventEnterprise[]
+  departments      EventDepartment[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@map("events")
+}
+
+model EventEnterprise {
+  eventId          String
+  enterpriseId     String
+  role             String?           // Vai trò của doanh nghiệp: Đồng tổ chức, Nhà tài trợ chính, Khách mời...
+  
+  event            Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  enterprise       Enterprise        @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, enterpriseId])
+  @@map("event_enterprises")
+}
+
+model EventDepartment {
+  eventId          String
+  departmentId     String // Đơn vị chủ trì / phối hợp
+  isLead           Boolean           @default(false) // Chủ trì hay phối hợp
+  
+  event            Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  department       Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, departmentId])
+  @@map("event_departments")
+}
+
+// ==========================================
+// MODULE NHẮC VIỆC & TASK
+// ==========================================
+
+model Task {
+  id               String            @id @default(uuid())
+  title            String
+  description      String?
+  dueDate          DateTime
+  status           String            // TODO | IN_PROGRESS | COMPLETED
+  priority         String            // HIGH | MEDIUM | LOW
+  
+  // Liên kết
+  enterpriseId     String?
+  enterprise       Enterprise?       @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  
+  interactionId    String?
+  interaction      Interaction?      @relation(fields: [interactionId], references: [id], onDelete: SetNull)
+  
+  assigneeId       String
+  assignee         User              @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  
+  creatorId        String
+  creator          User              @relation("TaskCreator", fields: [creatorId], references: [id])
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([assigneeId])
+  @@index([enterpriseId])
+  @@map("tasks")
+}
+
+model Notification {
+  id               String            @id @default(uuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title            String
+  content          String
+  type             String            // MOU_EXPIRY | TASK_DUE | INTERACTION_REMINDER | SYSTEM
+  isRead           Boolean           @default(false)
+  link             String?           // Hướng dẫn liên kết xem chi tiết
+  
+  createdAt        DateTime          @default(now())
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+// ==========================================
+// AUDIT LOG & ATTACHMENTS
+// ==========================================
+
+model AuditLog {
+  id               String            @id @default(uuid())
+  userId           String?
+  user             User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  action           String            // E.g., "CREATE_ENTERPRISE", "UPDATE_MOU"
+  module           String            // E.g., "ENTERPRISE", "MOU"
+  recordId         String?           // ID của bản ghi được tác động
+  description      String            // Chi tiết thay đổi hoặc hành động
+  ipAddress        String?
+  
+  createdAt        DateTime          @default(now())
+
+  @@index([userId])
+  @@index([module])
+  @@map("audit_logs")
+}

@@ -1,0 +1,43 @@
+# ==========================================
+# CI - Kiểm tra tự động mỗi khi push / mở Pull Request
+# ==========================================
+# Chạy: cài dependencies -> type-check (lint) -> test -> build.
+# Nếu bất kỳ bước nào fail, PR sẽ bị đánh dấu đỏ.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Cài đặt dependencies
+        run: npm ci
+
+      - name: Type-check (lint)
+        run: npm run lint
+
+      - name: Chạy test
+        run: npm test
+        env:
+          # Secret giả lập cho test (test tự đặt JWT_SECRET riêng, đây là phòng hờ).
+          JWT_SECRET: ci-test-secret-key-minimum-32-characters-long-123456
+          NODE_ENV: test
+
+      - name: Build production
+        run: npm run build

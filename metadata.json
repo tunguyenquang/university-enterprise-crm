@@ -1,0 +1,6 @@
+{
+  "name": "University Enterprise CRM",
+  "description": "Hệ thống quản lý quan hệ doanh nghiệp, quản lý MOU/MOA, nhật ký tương tác, cơ hội việc làm, sự kiện hợp tác và tiến độ quan hệ doanh nghiệp trong trường Đại học.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
