@@ -61,6 +61,12 @@ $ServiceName  = 'hustcrm'
 $SiteDir      = "C:\inetpub\wwwroot\$Domain"
 $AppDir       = "$SiteDir\app"
 $LogDir       = "$SiteDir\logs"
+# node_modules (~347MB, phan lon la Prisma engine) DAT NGOAI site folder:
+#  - IIS document root chi con ~1.3MB (dist + prisma + package.json), gon va de soi
+#  - khong co 6.000+ file thu vien nam duoi document root
+# Lien ket bang NODE_PATH tren service (xem buoc 8). Da kiem chung Prisma engine
+# van hoat dong binh thuong khi resolve qua NODE_PATH.
+$RuntimeDir   = "C:\apps\$ServiceName-runtime"
 $AppPort      = 3090
 $NssmPath     = 'C:\apps\tools\nssm.exe'
 $NodeExe      = 'C:\Program Files\nodejs\node.exe'
@@ -186,6 +192,7 @@ if (-not $DryRun) {
 New-Item -ItemType Directory -Force -Path '$SiteDir' | Out-Null
 New-Item -ItemType Directory -Force -Path '$AppDir' | Out-Null
 New-Item -ItemType Directory -Force -Path '$LogDir' | Out-Null
+New-Item -ItemType Directory -Force -Path '$RuntimeDir' | Out-Null
 New-Item -ItemType Directory -Force -Path '$AppDir\uploads' | Out-Null
 # Xoa dist cu de khong con file js/css bam version cu (hash filename)
 if (Test-Path '$AppDir\dist') { Remove-Item '$AppDir\dist' -Recurse -Force }
@@ -227,18 +234,30 @@ if (-not $DryRun) { Info "  $envOut" }
 
 # ---------- 7. Cai dependency production + Prisma client ----------
 if (-not $AppOnly) {
-    Info 'Cai dependency production va sinh Prisma client tren server (co the mat vai phut)...'
+    Info 'Cai dependency production vao thu muc runtime (co the mat vai phut)...'
+    # package.json + prisma/ duoc copy sang RuntimeDir de npm/prisma lam viec o day.
+    # AppDir van giu ban sao package.json cho tien tra cuu, nhung KHONG co node_modules.
     $npmOut = Remote @"
-Set-Location '$AppDir'
+Copy-Item '$AppDir\package.json' '$RuntimeDir\package.json' -Force
+if (Test-Path '$RuntimeDir\prisma') { Remove-Item '$RuntimeDir\prisma' -Recurse -Force }
+Copy-Item '$AppDir\prisma' '$RuntimeDir' -Recurse -Force
+Set-Location '$RuntimeDir'
 & npm install --omit=dev --no-audit --no-fund 2>&1 | Select-Object -Last 5
 & npx prisma generate 2>&1 | Select-Object -Last 3
+# Bo cache npm (~38MB) sau khi cai xong - khong can cho runtime.
+& npm cache clean --force 2>&1 | Out-Null
+# Neu lan deploy truoc da tao node_modules trong site folder thi don di.
+if (Test-Path '$AppDir\node_modules') {
+    Remove-Item '$AppDir\node_modules' -Recurse -Force
+    Write-Output 'DA_DON_node_modules_trong_site_folder'
+}
 "@
     if (-not $DryRun) { Info "  $npmOut" }
 
     # migrate deploy chi AP DUNG migration chua chay, khong xoa/sua du lieu san co.
     Info 'Ap dung migration (khong dung du lieu san co)...'
     $dbOut2 = Remote @"
-Set-Location '$AppDir'
+Set-Location '$RuntimeDir'
 & npx prisma migrate deploy 2>&1 | Select-Object -Last 4
 "@
     if (-not $DryRun) { Info "  $dbOut2" }
@@ -246,7 +265,7 @@ Set-Location '$AppDir'
     if ($Seed) {
         Warn 'Dang chay SEED: se ghi de du lieu mau (user/DN/MOU/task) theo id co dinh.'
         $seedOut = Remote @"
-Set-Location '$AppDir'
+Set-Location '$RuntimeDir'
 & npx tsx prisma/seed.ts 2>&1 | Select-Object -Last 3
 "@
         if (-not $DryRun) { Info "  $seedOut" }
@@ -275,6 +294,8 @@ if (-not `$svc) {
 & '$NssmPath' set $ServiceName AppRotateBytes 20971520          | Out-Null
 & '$NssmPath' set $ServiceName AppRestartDelay 5000             | Out-Null
 & '$NssmPath' set $ServiceName AppStopMethodConsole 20000       | Out-Null
+# NODE_PATH cho Node tim thu vien o thu muc runtime nam ngoai site folder.
+& '$NssmPath' set $ServiceName AppEnvironmentExtra "NODE_PATH=$RuntimeDir\node_modules" | Out-Null
 & '$NssmPath' set $ServiceName Start SERVICE_AUTO_START         | Out-Null
 & '$NssmPath' start $ServiceName | Out-Null
 Start-Sleep -Seconds 6
@@ -335,7 +356,8 @@ Info ''
 Info '===== DEPLOY XONG ====='
 Info "  URL       : https://$Domain"
 Info "  Service   : $ServiceName (NSSM) -> 127.0.0.1:$AppPort"
-Info "  Code      : $AppDir"
+Info "  Code      : $AppDir  (chi dist/prisma/package.json)"
+Info "  Runtime   : $RuntimeDir\node_modules  (ngoai site folder)"
 Info "  Log       : $LogDir\app.out.log / app.err.log"
 Info "  Database  : $DbName (PostgreSQL 18 tren chinh .174)"
 Info ''

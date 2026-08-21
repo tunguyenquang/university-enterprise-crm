@@ -38,6 +38,9 @@ jobs:
 
     env:
       APP_DIR: C:\inetpub\wwwroot\hustcrm.jvs.com.vn\app
+      # node_modules (~347MB, phần lớn là Prisma engine) nằm NGOÀI site folder;
+      # service trỏ tới đây qua biến NODE_PATH. Document root chỉ còn ~1.3MB.
+      RUNTIME_DIR: C:\apps\hustcrm-runtime
       SERVICE_NAME: hustcrm
       NSSM: C:\apps\tools\nssm.exe
       APP_PORT: '3090'
@@ -78,14 +81,26 @@ jobs:
           Copy-Item -Path "package.json" -Destination "$env:APP_DIR\package.json" -Force
           Copy-Item -Path "prisma" -Destination "$env:APP_DIR" -Recurse -Force
 
-      # package.json có thể thêm dependency mới -> cài lại (chỉ prod) và sinh lại Prisma client.
+      # package.json có thể thêm dependency mới -> cài lại (chỉ prod) và sinh lại Prisma
+      # client. Chạy trong RUNTIME_DIR để node_modules không nằm dưới document root.
       - name: Cài dependencies production trên server
         shell: powershell
-        working-directory: ${{ env.APP_DIR }}
         run: |
           $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:RUNTIME_DIR | Out-Null
+          Copy-Item "$env:APP_DIR\package.json" "$env:RUNTIME_DIR\package.json" -Force
+          if (Test-Path "$env:RUNTIME_DIR\prisma") { Remove-Item "$env:RUNTIME_DIR\prisma" -Recurse -Force }
+          Copy-Item "$env:APP_DIR\prisma" $env:RUNTIME_DIR -Recurse -Force
+          Set-Location $env:RUNTIME_DIR
           npm install --omit=dev --no-audit --no-fund
           npx prisma generate
+          npm cache clean --force
+          # Dọn nếu lần deploy cũ còn node_modules trong site folder.
+          $stale = Join-Path $env:APP_DIR 'node_modules'
+          if (Test-Path $stale) {
+            Remove-Item $stale -Recurse -Force
+            Write-Host "Đã dọn node_modules cũ trong site folder"
+          }
 
       - name: Khởi động service
         shell: powershell

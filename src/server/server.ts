@@ -3,7 +3,6 @@ import path from "path";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { createServer as createViteServer } from "vite";
 import { config } from "./config.ts";
 import { logger } from "./logger.ts";
 import { dbService } from "./db.ts";
@@ -1395,6 +1394,13 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 export async function startServer() {
   if (!config.isProduction) {
     logger.info("Khởi động Express cùng Vite Dev Server (development)...");
+    // Nạp Vite bằng dynamic import, KHÔNG import ở đầu file.
+    //
+    // Vì sao: Vite chỉ phục vụ dev (production dùng express.static ở nhánh dưới).
+    // Nếu import tĩnh thì `require("vite")` vẫn chạy lúc khởi động ở production,
+    // buộc phải cài vite + toàn bộ phụ thuộc build của nó trên server (~hàng trăm MB)
+    // dù không dùng tới. Dynamic import cho phép để vite ở devDependencies.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

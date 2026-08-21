@@ -28,7 +28,8 @@ IIS site "hustcrm.jvs.com.vn"        ← chỉ chứa web.config, KHÔNG chứa 
 http://127.0.0.1:3090                 ← app chỉ nghe localhost, không mở ra ngoài
     │
 Windows Service "hustcrm" (NSSM)     ← node dist/server.cjs, tự khởi động lại khi lỗi
-    │
+    │  NODE_PATH → C:pps\hustcrm-runtime
+ode_modules   (ngoài site folder)
     ▼
 PostgreSQL 18 trên chính .174 → database "university_crm"
 ```
@@ -111,6 +112,9 @@ Máy `.174` đang chạy ~18 site thật, nên script được viết để **ch
   `fileExtensions` (`.env`, `.map`, `.ps1`, `.cjs`), kèm `directoryBrowse enabled="false"`.
   Đã kiểm chứng thực tế: `/app/.env`, `/app/dist/server.cjs`, `/app/package.json`,
   `/logs/app.err.log`, `/web.config` đều trả **404 rỗng**.
+- ✅ **`node_modules` nằm NGOÀI site folder.** Đặt ở `C:pps\hustcrm-runtime`, service
+  trỏ tới bằng biến `NODE_PATH`. Document root vì thế chỉ còn ~1,5 MB / 17 file thay vì
+  ~470 MB / 14.000 file. Đã kiểm chứng Prisma engine vẫn resolve bình thường qua `NODE_PATH`.
 - ⛔ **KHÔNG dùng `<serverVariables>` trong `web.config`.** `allowedServerVariables` ở
   server level đang trống; thêm vào đó **ảnh hưởng mọi site khác** trên máy. URL công khai
   lấy từ biến môi trường `APP_URL` nên không cần `X-Forwarded-Proto`.
@@ -237,3 +241,46 @@ Hoặc dùng script deploy đầy đủ từ máy local (`deploy-to-174.ps1`, c�
 - **Xoá `dist` cũ** → không còn sót file js/css của bản build trước (tên có hash).
 - **Kiểm HTTP 200 với 6 lần thử**; nếu thất bại thì **in 30 dòng cuối `app.err.log` và fail job** — không báo thành công trên một app đã chết.
 - Có thể **bấm deploy tay** từ tab Actions (`workflow_dispatch`) khi cần.
+
+---
+
+## 9. Vì sao server cần `node_modules`, và nó nặng bao nhiêu
+
+### 9.1. Bundle cố ý không gói thư viện
+
+`package.json` build backend bằng:
+
+```
+esbuild src/server/server.ts --bundle --packages=external ...
+```
+
+`--packages=external` nghĩa là esbuild **không nhúng** thư viện vào bundle. `dist/server.cjs`
+chỉ ~143 KB và lúc chạy vẫn `require()` 10 gói: `express`, `@prisma/client`, `bcryptjs`,
+`cors`, `dotenv`, `express-rate-limit`, `helmet`, `jsonwebtoken`, `multer`, `zod`.
+
+Riêng `@prisma/client` **buộc phải** ở `node_modules`: `prisma generate` sinh engine nhị phân
+riêng cho từng OS, bundle không thay thế được.
+
+**Deploy KHÔNG đẩy `node_modules` qua mạng** — script chỉ `scp` `dist/` + `prisma/` +
+`package.json` (~1,3 MB); `node_modules` do `npm install --omit=dev` chạy tại server sinh ra.
+
+### 9.2. Dung lượng nằm ở đâu
+
+| Thành phần | Dung lượng | Ghi chú |
+|---|---:|---|
+| `@prisma` + `prisma` + `.prisma` | **~247 MB** | Prisma v6 khai `prisma` CLI là dependency của `@prisma/client`, kéo theo `typescript` (22 MB) và `effect` (26 MB) |
+| 10 gói runtime còn lại | ~40 MB | express, zod, bcryptjs… |
+| npm cache | 38 MB | đã dọn tự động sau khi cài (`npm cache clean --force`) |
+
+Con số ~247 MB của Prisma là **đặc tính của Prisma v6**, không phải lỗi cấu hình dự án.
+
+### 9.3. Đã tối ưu những gì
+
+1. **Phân loại lại dependency**: `vite`, `react`, `react-dom`, `lucide-react`, `motion`,
+   `@vitejs/plugin-react`, `@tailwindcss/vite`, `@google/genai` chuyển sang `devDependencies`
+   — chúng chỉ dùng build-time, frontend đã được bundle sẵn vào `dist/assets`.
+   Kèm đó `vite` trong `server.ts` chuyển sang **dynamic import** (chỉ nạp ở nhánh dev),
+   vì import tĩnh khiến `require("vite")` vẫn chạy ở production.
+   → **468 MB → 347 MB** (14.257 → 6.318 file).
+2. **Tách khỏi site folder** bằng `NODE_PATH` → document root còn **1,5 MB**.
+3. **Dọn npm cache** sau khi cài → bớt 38 MB.
